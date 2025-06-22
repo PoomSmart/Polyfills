@@ -1,0 +1,1 @@
+"use strict";(function(){if(!HTMLDialogElement.prototype._originalMatches){HTMLDialogElement.prototype._originalMatches=HTMLDialogElement.prototype.matches;HTMLDialogElement.prototype.matches=function(selector){var modifiedSelector=selector.replace(/:modal/g,".modal");return HTMLDialogElement.prototype._originalMatches.call(this,modifiedSelector)}}})();
