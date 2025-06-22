@@ -1,5 +1,16 @@
 # Filesystem-Based Polyfills
 
+## Build Process
+
+The build script (`build-scripts.sh`) processes JavaScript polyfills for optimal packaging:
+
+1. **File Organization**: Copies and organizes scripts from source directories
+2. **Base Script Handling**: Moves all root-level `.js` files to `base/` folders automatically
+3. **Optimization**: Transpiles with Babel and minifies with UglifyJS for smaller package size
+4. **Performance**: Processes files per folder for efficient build times
+
+**Requirements**: Node.js and npm must be installed for transpilation and minification. If npx is not available, files will be copied without optimization.
+
 ## Directory Structure
 
 The tweak loads JavaScript files from `/Library/Application Support/Polyfills/` with the following structure:
@@ -46,7 +57,7 @@ To add a new polyfill:
 3. For version-specific polyfills, place them in the corresponding version directory
 4. Files are loaded alphabetically, so prefix with numbers if order matters (e.g., `01-feature.js`, `02-other.js`)
 
-**Requirements**: The migration script requires Node.js and npm to be installed for transpilation and minification. If npx is not available, files will be copied without processing.
+**Requirements**: The build script requires Node.js and npm to be installed for transpilation and minification. If npx is not available, files will be copied without optimization.
 
 ## Debugging
 

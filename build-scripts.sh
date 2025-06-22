@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Script to migrate existing polyfill scripts to the new filesystem-based structure
-# This copies all scripts from ./scripts and ./scripts-post to the layout directory
-# and transpiles/minifies them using Babel and UglifyJS
+# Script to build and optimize polyfill scripts for packaging
+# This processes all scripts from ./scripts and ./scripts-post, transpiles and minifies them
+# for optimal package size and runtime performance
 
 set -e
 
@@ -11,7 +11,7 @@ SOURCE_SCRIPTS="$SCRIPT_DIR/scripts"
 SOURCE_SCRIPTS_POST="$SCRIPT_DIR/scripts-post"
 TARGET_BASE="$SCRIPT_DIR/layout/Library/Application Support/Polyfills"
 
-echo "Migrating polyfill scripts to new filesystem structure..."
+echo "Building and optimizing polyfill scripts..."
 
 # Function to process JS files in a folder (transpile and minify each file)
 process_js_folder() {
@@ -90,11 +90,14 @@ if [ -d "$SOURCE_SCRIPTS" ]; then
     echo "Copying scripts structure..."
     cp -r "$SOURCE_SCRIPTS"/* "$TARGET_BASE/scripts/" 2>/dev/null || true
 
-    # Create base directory and move A_start.js there
+    # Create base directory and move all JS files from root level there
     mkdir -p "$TARGET_BASE/scripts/base"
-    if [ -f "$TARGET_BASE/scripts/A_start.js" ]; then
-        mv "$TARGET_BASE/scripts/A_start.js" "$TARGET_BASE/scripts/base/"
-    fi
+    find "$TARGET_BASE/scripts" -maxdepth 1 -name "*.js" -type f | while IFS= read -r js_file; do
+        if [ -f "$js_file" ]; then
+            mv "$js_file" "$TARGET_BASE/scripts/base/"
+            echo "  Moved $(basename "$js_file") to base folder"
+        fi
+    done
 fi
 
 # Copy scripts-post directory structure first
@@ -102,11 +105,12 @@ if [ -d "$SOURCE_SCRIPTS_POST" ]; then
     echo "Copying scripts-post structure..."
     cp -r "$SOURCE_SCRIPTS_POST"/* "$TARGET_BASE/scripts-post/" 2>/dev/null || true
 
-    # Create base directory and move base files there
+    # Create base directory and move all JS files from root level there
     mkdir -p "$TARGET_BASE/scripts-post/base"
-    for file in A_start.js meta.js; do
-        if [ -f "$TARGET_BASE/scripts-post/$file" ]; then
-            mv "$TARGET_BASE/scripts-post/$file" "$TARGET_BASE/scripts-post/base/"
+    find "$TARGET_BASE/scripts-post" -maxdepth 1 -name "*.js" -type f | while IFS= read -r js_file; do
+        if [ -f "$js_file" ]; then
+            mv "$js_file" "$TARGET_BASE/scripts-post/base/"
+            echo "  Moved $(basename "$js_file") to base folder"
         fi
     done
 
@@ -115,28 +119,27 @@ if [ -d "$SOURCE_SCRIPTS_POST" ]; then
 fi
 
 echo ""
-echo "Processing JavaScript files with Babel and UglifyJS..."
+echo "Building and optimizing JavaScript files with Babel and UglifyJS..."
 
-# Process all folders in scripts directory
+# Process all folders in scripts directory (excluding root level)
 if [ -d "$TARGET_BASE/scripts" ]; then
-    find "$TARGET_BASE/scripts" -type d | while IFS= read -r folder; do
+    find "$TARGET_BASE/scripts" -mindepth 1 -type d | while IFS= read -r folder; do
         process_js_folder "$folder"
     done
 fi
 
-# Process all folders in scripts-post directory
+# Process all folders in scripts-post directory (excluding root level)
 if [ -d "$TARGET_BASE/scripts-post" ]; then
-    find "$TARGET_BASE/scripts-post" -type d | while IFS= read -r folder; do
+    find "$TARGET_BASE/scripts-post" -mindepth 1 -type d | while IFS= read -r folder; do
         process_js_folder "$folder"
     done
 fi
 
 echo ""
-echo "All JavaScript files have been transpiled with Babel and minified with UglifyJS."
-echo "Processing was done per folder for improved performance."
-echo "New structure created at: $TARGET_BASE"
+echo "All JavaScript files have been transpiled and minified for optimal performance."
+echo "Optimized structure created at: $TARGET_BASE"
 echo ""
-echo "The tweak will now load JavaScript files dynamically from:"
+echo "The tweak will load JavaScript files dynamically from:"
 echo "/Library/Application Support/Polyfills/"
 echo ""
-echo "Note: If npx/Node.js is not available, files were copied without processing."
+echo "Note: If npx/Node.js is not available, files were copied without optimization."

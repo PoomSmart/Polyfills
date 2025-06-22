@@ -4,7 +4,6 @@ module.exports = {
             targets: {
                 browsers: ["ios >= 8"]
             },
-            forceAllTransforms: true
         }]
     ]
 };

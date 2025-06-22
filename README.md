@@ -25,9 +25,12 @@ The scripts may be put under a folder named after the specific iOS version, such
 
 ```sh
 npm install
+./build-scripts.sh   # Build and optimize JavaScript polyfills
 make headers
 make
 ```
+
+The build script transpiles and minifies all JavaScript files for optimal package size and runtime performance.
 
 # Will it fix XXX website?
 
