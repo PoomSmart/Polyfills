@@ -6,14 +6,14 @@ ColumnLimit: 120
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: Inline
-BreakBeforeBraces: Allman
+BreakBeforeBraces: Attach
 IndentCaseLabels: true
 SpacesBeforeTrailingComments: 1
 SpaceBeforeParens: ControlStatements
 ReflowComments: true
 SortIncludes: false
 AlignTrailingComments: true
-PointerAlignment: Left
+PointerAlignment: Right
 DerivePointerAlignment: false
 MaxEmptyLinesToKeep: 1
 SeparateDefinitionBlocks: Always

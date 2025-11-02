@@ -12,13 +12,11 @@
 // Simple logging helper
 #define PFPrefsLog(fmt, ...) HBLogDebug(@"[PolyfillsPrefs] " fmt, ##__VA_ARGS__)
 
-static NSString* PFBasePath(void)
-{
+static NSString *PFBasePath(void) {
     return PS_ROOT_PATH_NS(@"/Library/Application Support/Polyfills");
 }
 
-static NSArray* PFScriptDirs(void)
-{
+static NSArray *PFScriptDirs(void) {
     return @[ @"scripts-priority", @"scripts", @"scripts-post" ];
 }
 
@@ -26,43 +24,39 @@ static NSArray* PFScriptDirs(void)
 @end
 
 @interface PolyfillsScriptBlacklistController : PSListController <UITextFieldDelegate>
-@property(nonatomic, strong) NSString* scriptName;               // lowercase
-@property(nonatomic, strong) NSMutableArray* domains;            // mutable list of lowercase domains
-@property(nonatomic, strong) NSMutableDictionary* allBlacklists; // script -> domains array
+@property(nonatomic, strong) NSString *scriptName;               // lowercase
+@property(nonatomic, strong) NSMutableArray *domains;            // mutable list of lowercase domains
+@property(nonatomic, strong) NSMutableDictionary *allBlacklists; // script -> domains array
 @end
 
-@implementation PolyfillsRootListController
-{
-    NSMutableSet* _disabledScripts;   // lowercase
-    NSMutableDictionary* _blacklists; // script -> domains
+@implementation PolyfillsRootListController {
+    NSMutableSet *_disabledScripts;   // lowercase
+    NSMutableDictionary *_blacklists; // script -> domains
 }
 
-- (void)loadPrefs
-{
+- (void)loadPrefs {
     CFArrayRef dis = (CFArrayRef)CFPreferencesCopyAppValue(disabledScriptsKey, domain);
     _disabledScripts = [NSMutableSet set];
     if (dis && CFGetTypeID(dis) == CFArrayGetTypeID())
-        for (NSString* s in (__bridge NSArray*)dis)
+        for (NSString *s in (__bridge NSArray *)dis)
             [_disabledScripts addObject:s.lowercaseString];
     if (dis)
         CFRelease(dis);
     CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
     _blacklists = [NSMutableDictionary dictionary];
     if (bl && CFGetTypeID(bl) == CFDictionaryGetTypeID())
-        [_blacklists addEntriesFromDictionary:(__bridge NSDictionary*)bl];
+        [_blacklists addEntriesFromDictionary:(__bridge NSDictionary *)bl];
     if (bl)
         CFRelease(bl);
     PFPrefsLog(@"Root loadPrefs: disabled=%lu, blacklistKeys=%@", (unsigned long)_disabledScripts.count,
                _blacklists.allKeys);
 }
 
-- (NSArray*)specifiers
-{
-    if (!_specifiers)
-    {
+- (NSArray *)specifiers {
+    if (!_specifiers) {
         [self loadPrefs];
-        NSMutableArray* specs = [NSMutableArray array];
-        PSSpecifier* grp = [PSSpecifier preferenceSpecifierNamed:@"Polyfills"
+        NSMutableArray *specs = [NSMutableArray array];
+        PSSpecifier *grp = [PSSpecifier preferenceSpecifierNamed:@"Polyfills"
                                                           target:self
                                                              set:NULL
                                                              get:NULL
@@ -71,20 +65,20 @@ static NSArray* PFScriptDirs(void)
                                                             edit:Nil];
         [specs addObject:grp];
 
-        PSSpecifier* en = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
+        PSSpecifier *en = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
                                                          target:self
                                                             set:@selector(setPreferenceValue:specifier:)
                                                             get:@selector(readPreferenceValue:)
                                                          detail:Nil
                                                            cell:PSSwitchCell
                                                            edit:Nil];
-        [en setProperty:(__bridge NSString*)domain forKey:@"defaults"];
-        [en setProperty:(__bridge NSString*)key forKey:@"key"];
+        [en setProperty:(__bridge NSString *)domain forKey:@"defaults"];
+        [en setProperty:(__bridge NSString *)key forKey:@"key"];
         [en setProperty:@YES forKey:@"default"];
         [specs addObject:en];
 
         // Group for Spoof User Agent toggle
-        PSSpecifier* uaGrp = [PSSpecifier preferenceSpecifierNamed:@"Spoof User Agent"
+        PSSpecifier *uaGrp = [PSSpecifier preferenceSpecifierNamed:@"Spoof User Agent"
                                                             target:self
                                                                set:NULL
                                                                get:NULL
@@ -95,25 +89,24 @@ static NSArray* PFScriptDirs(void)
                            @"some other websites."
                     forKey:@"footerText"];
         [specs addObject:uaGrp];
-        PSSpecifier* ua = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
+        PSSpecifier *ua = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
                                                          target:self
                                                             set:@selector(setPreferenceValue:specifier:)
                                                             get:@selector(readPreferenceValue:)
                                                          detail:Nil
                                                            cell:PSSwitchCell
                                                            edit:Nil];
-        [ua setProperty:(__bridge NSString*)domain forKey:@"defaults"];
-        [ua setProperty:(__bridge NSString*)userAgentKey forKey:@"key"];
+        [ua setProperty:(__bridge NSString *)domain forKey:@"defaults"];
+        [ua setProperty:(__bridge NSString *)userAgentKey forKey:@"key"];
         [ua setProperty:@NO forKey:@"default"];
         [specs addObject:ua];
         NSOperatingSystemVersion osv = [[NSProcessInfo processInfo] operatingSystemVersion];
         // iOS version gate: show only on iOS 11.0 - 16.3 inclusive
         BOOL showHeaderToggle = (osv.majorVersion == 11 || osv.majorVersion > 11) && // >=11
                                 ((osv.majorVersion < 16) || (osv.majorVersion == 16 && osv.minorVersion <= 3));
-        if (showHeaderToggle)
-        {
+        if (showHeaderToggle) {
             // Group for Header Injection toggle with explanatory footer
-            PSSpecifier* hiGrp = [PSSpecifier preferenceSpecifierNamed:@"Header Injection"
+            PSSpecifier *hiGrp = [PSSpecifier preferenceSpecifierNamed:@"Header Injection"
                                                                 target:self
                                                                    set:NULL
                                                                    get:NULL
@@ -124,20 +117,20 @@ static NSArray* PFScriptDirs(void)
                                @"compatibility; disable if pages misbehave."
                         forKey:@"footerText"];
             [specs addObject:hiGrp];
-            PSSpecifier* hi = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
+            PSSpecifier *hi = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
                                                              target:self
                                                                 set:@selector(setPreferenceValue:specifier:)
                                                                 get:@selector(readPreferenceValue:)
                                                              detail:Nil
                                                                cell:PSSwitchCell
                                                                edit:Nil];
-            [hi setProperty:(__bridge NSString*)domain forKey:@"defaults"];
-            [hi setProperty:(__bridge NSString*)headerInjectionKey forKey:@"key"];
+            [hi setProperty:(__bridge NSString *)domain forKey:@"defaults"];
+            [hi setProperty:(__bridge NSString *)headerInjectionKey forKey:@"key"];
             [hi setProperty:@NO forKey:@"default"];
             [specs addObject:hi];
         }
 
-        PSSpecifier* scriptsGrp = [PSSpecifier preferenceSpecifierNamed:@"Scripts"
+        PSSpecifier *scriptsGrp = [PSSpecifier preferenceSpecifierNamed:@"Scripts"
                                                                  target:self
                                                                     set:NULL
                                                                     get:NULL
@@ -148,21 +141,19 @@ static NSArray* PFScriptDirs(void)
         [specs addObject:scriptsGrp];
 
         // Collect script metadata first so we can sort by version threshold.
-        NSMutableArray* entries = [NSMutableArray array];
-        NSFileManager* fm = [NSFileManager defaultManager];
-        NSRegularExpression* verRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d+\\.\\d+$"
+        NSMutableArray *entries = [NSMutableArray array];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSRegularExpression *verRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d+\\.\\d+$"
                                                                                   options:0
                                                                                     error:nil];
-        NSMutableSet* seen = [NSMutableSet set];
-        for (NSString* top in PFScriptDirs())
-        {
-            NSString* topPath = [[PFBasePath() stringByAppendingPathComponent:top] stringByStandardizingPath];
+        NSMutableSet *seen = [NSMutableSet set];
+        for (NSString *top in PFScriptDirs()) {
+            NSString *topPath = [[PFBasePath() stringByAppendingPathComponent:top] stringByStandardizingPath];
             // Base scripts (always applicable) use synthetic version 0.0 so they sort first.
-            NSString* baseDir = [topPath stringByAppendingPathComponent:@"base"];
-            for (NSString* f in [fm contentsOfDirectoryAtPath:baseDir error:nil])
-                if ([f hasSuffix:@".js"])
-                {
-                    NSString* lower = f.lowercaseString;
+            NSString *baseDir = [topPath stringByAppendingPathComponent:@"base"];
+            for (NSString *f in [fm contentsOfDirectoryAtPath:baseDir error:nil])
+                if ([f hasSuffix:@".js"]) {
+                    NSString *lower = f.lowercaseString;
                     if ([seen containsObject:lower])
                         continue; // first one wins
                     [seen addObject:lower];
@@ -177,30 +168,28 @@ static NSArray* PFScriptDirs(void)
                     }];
                 }
             // Version directories (only those whose threshold is greater than current OS -> still active)
-            NSArray* topItems = [fm contentsOfDirectoryAtPath:topPath error:nil];
-            for (NSString* sub in topItems)
-            {
+            NSArray *topItems = [fm contentsOfDirectoryAtPath:topPath error:nil];
+            for (NSString *sub in topItems) {
                 if ([sub isEqualToString:@"base"])
                     continue;
                 if ([verRegex numberOfMatchesInString:sub options:0 range:NSMakeRange(0, sub.length)] == 0)
                     continue;
-                NSArray* comps = [sub componentsSeparatedByString:@"."];
+                NSArray *comps = [sub componentsSeparatedByString:@"."];
                 NSInteger vMajor = comps.count > 0 ? [comps[0] integerValue] : 0;
                 NSInteger vMinor = comps.count > 1 ? [comps[1] integerValue] : 0;
                 BOOL currentIsOlder =
                     (osv.majorVersion < vMajor) || (osv.majorVersion == vMajor && osv.minorVersion < vMinor);
                 if (!currentIsOlder)
                     continue; // skip inactive dirs
-                NSString* verDir = [topPath stringByAppendingPathComponent:sub];
-                for (NSString* f in [fm contentsOfDirectoryAtPath:verDir error:nil])
-                    if ([f hasSuffix:@".js"])
-                    {
-                        NSString* lower = f.lowercaseString;
+                NSString *verDir = [topPath stringByAppendingPathComponent:sub];
+                for (NSString *f in [fm contentsOfDirectoryAtPath:verDir error:nil])
+                    if ([f hasSuffix:@".js"]) {
+                        NSString *lower = f.lowercaseString;
                         if ([seen containsObject:lower])
                             continue;
                         [seen addObject:lower];
                         NSUInteger blCount = [[_blacklists objectForKey:lower] count];
-                        NSString* label = [NSString stringWithFormat:@"%@@%@", f, sub];
+                        NSString *label = [NSString stringWithFormat:@"%@@%@", f, sub];
                         [entries addObject:@{
                             @"label" : label,
                             @"script" : lower,
@@ -213,7 +202,7 @@ static NSArray* PFScriptDirs(void)
             }
         }
         // Sort: base first, then ascending version (major, minor), then label.
-        [entries sortUsingComparator:^NSComparisonResult(NSDictionary* a, NSDictionary* b) {
+        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
           BOOL aBase = [a[@"isBase"] boolValue];
           BOOL bBase = [b[@"isBase"] boolValue];
           if (aBase != bBase)
@@ -229,13 +218,12 @@ static NSArray* PFScriptDirs(void)
           return [a[@"label"] caseInsensitiveCompare:b[@"label"]];
         }];
         // Build specifiers in sorted order, each script in its own group.
-        for (NSDictionary* entry in entries)
-        {
-            NSString* label = entry[@"label"]; // May include version suffix
-            NSString* script = entry[@"script"];
+        for (NSDictionary *entry in entries) {
+            NSString *label = entry[@"label"]; // May include version suffix
+            NSString *script = entry[@"script"];
             NSUInteger blCount = [entry[@"blCount"] unsignedIntegerValue];
             // Group header for this script
-            PSSpecifier* scriptGroup = [PSSpecifier preferenceSpecifierNamed:label
+            PSSpecifier *scriptGroup = [PSSpecifier preferenceSpecifierNamed:label
                                                                       target:self
                                                                          set:NULL
                                                                          get:NULL
@@ -244,7 +232,7 @@ static NSArray* PFScriptDirs(void)
                                                                         edit:Nil];
             [specs addObject:scriptGroup];
             // Toggle
-            PSSpecifier* tog = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
+            PSSpecifier *tog = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
                                                               target:self
                                                                  set:@selector(setScriptEnabled:specifier:)
                                                                  get:@selector(isScriptEnabled:)
@@ -254,8 +242,8 @@ static NSArray* PFScriptDirs(void)
             [tog setProperty:script forKey:@"scriptName"];
             [specs addObject:tog];
             // Blacklist link
-            NSString* blLabel = [NSString stringWithFormat:@"Blacklist (%lu)", (unsigned long)blCount];
-            PSSpecifier* edit = [PSSpecifier preferenceSpecifierNamed:blLabel
+            NSString *blLabel = [NSString stringWithFormat:@"Blacklist (%lu)", (unsigned long)blCount];
+            PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:blLabel
                                                                target:self
                                                                   set:NULL
                                                                   get:NULL
@@ -268,7 +256,7 @@ static NSArray* PFScriptDirs(void)
             [specs addObject:edit];
         }
 
-        PSSpecifier* footer = [PSSpecifier preferenceSpecifierNamed:@"About"
+        PSSpecifier *footer = [PSSpecifier preferenceSpecifierNamed:@"About"
                                                              target:self
                                                                 set:NULL
                                                                 get:NULL
@@ -282,14 +270,12 @@ static NSArray* PFScriptDirs(void)
     return _specifiers;
 }
 
-- (id)isScriptEnabled:(PSSpecifier*)spec
-{
+- (id)isScriptEnabled:(PSSpecifier *)spec {
     return @(![_disabledScripts containsObject:[spec propertyForKey:@"scriptName"]]);
 }
 
-- (void)setScriptEnabled:(id)val specifier:(PSSpecifier*)spec
-{
-    NSString* n = [spec propertyForKey:@"scriptName"];
+- (void)setScriptEnabled:(id)val specifier:(PSSpecifier *)spec {
+    NSString *n = [spec propertyForKey:@"scriptName"];
     if ([val boolValue])
         [_disabledScripts removeObject:n];
     else
@@ -297,8 +283,7 @@ static NSArray* PFScriptDirs(void)
     [self saveDisabled];
 }
 
-- (void)saveDisabled
-{
+- (void)saveDisabled {
     CFPreferencesSetAppValue(disabledScriptsKey, (__bridge CFArrayRef)_disabledScripts.allObjects, domain);
     CFPreferencesAppSynchronize(domain);
     PFPrefsLog(@"Saved disabled scripts (%lu)", (unsigned long)_disabledScripts.count);
@@ -308,8 +293,7 @@ static NSArray* PFScriptDirs(void)
 
 @implementation PolyfillsScriptBlacklistController
 
-- (void)viewDidLoad
-{
+- (void)viewDidLoad {
     [super viewDidLoad];
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave
@@ -317,71 +301,61 @@ static NSArray* PFScriptDirs(void)
                                                       action:@selector(saveAndClose)];
 }
 
-- (UIView*)_findFirstResponder:(UIView*)v
-{
+- (UIView *)_findFirstResponder:(UIView *)v {
     if (v.isFirstResponder)
         return v;
-    for (UIView* sub in v.subviews)
-    {
-        UIView* r = [self _findFirstResponder:sub];
+    for (UIView *sub in v.subviews) {
+        UIView *r = [self _findFirstResponder:sub];
         if (r)
             return r;
     }
     return nil;
 }
 
-- (UITableView*)_tableView
-{
+- (UITableView *)_tableView {
     // Try common patterns, fallback to scanning subviews.
-    if ([self respondsToSelector:@selector(table)])
-    {
-        UITableView* t = [self performSelector:@selector(table)];
+    if ([self respondsToSelector:@selector(table)]) {
+        UITableView *t = [self performSelector:@selector(table)];
         if ([t isKindOfClass:[UITableView class]])
             return t;
     }
     if ([self.view isKindOfClass:[UITableView class]])
-        return (UITableView*)self.view;
-    for (UIView* sub in self.view.subviews)
+        return (UITableView *)self.view;
+    for (UIView *sub in self.view.subviews)
         if ([sub isKindOfClass:[UITableView class]])
-            return (UITableView*)sub;
+            return (UITableView *)sub;
     return nil;
 }
 
 // Recursively locate first UITextField in a view hierarchy
-static UITextField* PFLocateTextField(UIView* root)
-{
+static UITextField *PFLocateTextField(UIView *root) {
     if ([root isKindOfClass:[UITextField class]])
-        return (UITextField*)root;
-    for (UIView* sub in root.subviews)
-    {
-        UITextField* f = PFLocateTextField(sub);
+        return (UITextField *)root;
+    for (UIView *sub in root.subviews) {
+        UITextField *f = PFLocateTextField(sub);
         if (f)
             return f;
     }
     return nil;
 }
 
-- (void)_commitCell:(UITableViewCell*)cell
-{
+- (void)_commitCell:(UITableViewCell *)cell {
     if (!cell)
         return;
-    PSSpecifier* spec =
+    PSSpecifier *spec =
         [cell respondsToSelector:@selector(specifier)] ? [cell performSelector:@selector(specifier)] : nil;
-    UITextField* tf = PFLocateTextField(cell.contentView ?: cell);
+    UITextField *tf = PFLocateTextField(cell.contentView ?: cell);
     if (!spec && !tf)
         return; // nothing to commit
-    if (!spec)
-    {
+    if (!spec) {
         PFPrefsLog(@"_commitCell: no specifier for cell class=%@", NSStringFromClass(cell.class));
         return;
     }
-    NSString* text = tf ? (tf.text ?: @"") : @"";
+    NSString *text = tf ? (tf.text ?: @"") : @"";
     PFPrefsLog(@"_commitCell specName=%@ cellClass=%@ text='%@'", [spec name], NSStringFromClass(cell.class), text);
-    if ([[spec name] isEqualToString:@"Add"])
-    {
-        NSString* vLower = text.lowercaseString;
-        if (vLower.length && ![self.domains containsObject:vLower])
-        {
+    if ([[spec name] isEqualToString:@"Add"]) {
+        NSString *vLower = text.lowercaseString;
+        if (vLower.length && ![self.domains containsObject:vLower]) {
             PFPrefsLog(@"Adding domain from Add Domain cell (full reload path): %@", vLower);
             [self.domains addObject:vLower];
             if (tf)
@@ -392,42 +366,34 @@ static UITextField* PFLocateTextField(UIView* root)
             _specifiers = nil; // Force full rebuild to avoid row mismatch
             [self reloadSpecifiers];
         }
-    }
-    else
-    {
-        NSString* old = [spec propertyForKey:@"value"] ?: @"";
-        if (![old isEqualToString:text])
-        {
+    } else {
+        NSString *old = [spec propertyForKey:@"value"] ?: @"";
+        if (![old isEqualToString:text]) {
             PFPrefsLog(@"Updating existing domain old=%@ new=%@", old, text);
             [self setDomain:text specifier:spec];
         }
     }
 }
 
-- (void)_commitAllEdits
-{
-    UITableView* tv = [self _tableView];
+- (void)_commitAllEdits {
+    UITableView *tv = [self _tableView];
     if (!tv)
         return;
     PFPrefsLog(@"_commitAllEdits visibleCount=%lu", (unsigned long)tv.visibleCells.count);
-    for (UITableViewCell* cell in tv.visibleCells)
-    {
+    for (UITableViewCell *cell in tv.visibleCells) {
         [self _commitCell:cell];
     }
     // Offscreen: attempt to load and commit every specifier that might have a text field (link cells excluded)
-    for (PSSpecifier* spec in _specifiers)
-    {
-        if ([spec cellType] == PSEditTextCell)
-        {
-            UITableViewCell* cell = [self cachedCellForSpecifier:spec];
+    for (PSSpecifier *spec in _specifiers) {
+        if ([spec cellType] == PSEditTextCell) {
+            UITableViewCell *cell = [self cachedCellForSpecifier:spec];
             if (cell)
                 [self _commitCell:cell];
         }
     }
 }
 
-- (void)saveAndClose
-{
+- (void)saveAndClose {
     // Commit all edits (visible + offscreen) then persist.
     PFPrefsLog(@"saveAndClose initial domains=%@", self.domains);
     [self.view endEditing:YES];
@@ -436,24 +402,22 @@ static UITextField* PFLocateTextField(UIView* root)
     [self persist];
 }
 
-- (NSArray*)specifiers
-{
-    if (!_specifiers)
-    {
+- (NSArray *)specifiers {
+    if (!_specifiers) {
         self.scriptName = [[self.specifier propertyForKey:@"scriptName"] lowercaseString];
         // load master dictionary
         CFPreferencesAppSynchronize(domain); // ensure latest values from other processes
         CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
         self.allBlacklists = [NSMutableDictionary dictionary];
         if (bl && CFGetTypeID(bl) == CFDictionaryGetTypeID())
-            [self.allBlacklists addEntriesFromDictionary:(__bridge NSDictionary*)bl];
+            [self.allBlacklists addEntriesFromDictionary:(__bridge NSDictionary *)bl];
         if (bl)
             CFRelease(bl);
         self.domains = [self.allBlacklists[self.scriptName] ?: @[] mutableCopy];
         PFPrefsLog(@"Blacklist specifiers init for script=%@ loadedKeys=%@ currentDomains=%@", self.scriptName,
                    self.allBlacklists.allKeys, self.domains);
-        NSMutableArray* specs = [NSMutableArray array];
-        PSSpecifier* grp = [PSSpecifier preferenceSpecifierNamed:self.scriptName
+        NSMutableArray *specs = [NSMutableArray array];
+        PSSpecifier *grp = [PSSpecifier preferenceSpecifierNamed:self.scriptName
                                                           target:self
                                                              set:NULL
                                                              get:NULL
@@ -464,10 +428,9 @@ static UITextField* PFLocateTextField(UIView* root)
                          @"delete an entry, clear its text and tap Save."
                   forKey:@"footerText"];
         [specs addObject:grp];
-        for (NSString* d in self.domains)
-        {
+        for (NSString *d in self.domains) {
             // Use a short bullet label; the text field already displays the domain value.
-            PSSpecifier* t = [PSSpecifier preferenceSpecifierNamed:@"•"
+            PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
                                                             target:self
                                                                set:@selector(setDomain:specifier:)
                                                                get:@selector(getDomain:)
@@ -477,7 +440,7 @@ static UITextField* PFLocateTextField(UIView* root)
             [t setProperty:d forKey:@"value"];
             [specs addObject:t];
         }
-        PSSpecifier* add = [PSSpecifier preferenceSpecifierNamed:@"Add"
+        PSSpecifier *add = [PSSpecifier preferenceSpecifierNamed:@"Add"
                                                           target:self
                                                              set:@selector(addDomain:specifier:)
                                                              get:NULL
@@ -491,23 +454,18 @@ static UITextField* PFLocateTextField(UIView* root)
     return _specifiers;
 }
 
-- (id)getDomain:(PSSpecifier*)spec
-{
+- (id)getDomain:(PSSpecifier *)spec {
     return [spec propertyForKey:@"value"];
 }
 
-- (void)setDomain:(id)val specifier:(PSSpecifier*)spec
-{
-    NSString* old = [spec propertyForKey:@"value"];
-    NSString* v = [[val description] lowercaseString];
+- (void)setDomain:(id)val specifier:(PSSpecifier *)spec {
+    NSString *old = [spec propertyForKey:@"value"];
+    NSString *v = [[val description] lowercaseString];
     PFPrefsLog(@"setDomain old=%@ new=%@ script=%@", old, v, self.scriptName);
-    if (v.length == 0)
-    {
+    if (v.length == 0) {
         [self.domains removeObject:old];
         [self removeSpecifier:spec animated:YES];
-    }
-    else
-    {
+    } else {
         NSUInteger idx = [self.domains indexOfObject:old];
         if (idx != NSNotFound)
             self.domains[idx] = v;
@@ -518,16 +476,14 @@ static UITextField* PFLocateTextField(UIView* root)
     [self persist];
 }
 
-- (void)addDomain:(id)val specifier:(PSSpecifier*)spec
-{
-    NSString* vLower = [[val description] lowercaseString];
+- (void)addDomain:(id)val specifier:(PSSpecifier *)spec {
+    NSString *vLower = [[val description] lowercaseString];
     PFPrefsLog(@"addDomain candidate=%@ script=%@ existing=%@", vLower, self.scriptName, self.domains);
-    if (vLower.length && ![self.domains containsObject:vLower])
-    {
+    if (vLower.length && ![self.domains containsObject:vLower]) {
         [self.domains addObject:vLower];
         NSInteger insertIndex = _specifiers.count - 1; // before Add Domain row
         // Bullet label to avoid duplicate domain text
-        PSSpecifier* t = [PSSpecifier preferenceSpecifierNamed:@"•"
+        PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
                                                         target:self
                                                            set:@selector(setDomain:specifier:)
                                                            get:@selector(getDomain:)
@@ -543,34 +499,31 @@ static UITextField* PFLocateTextField(UIView* root)
     }
 }
 
-- (void)persist
-{
+- (void)persist {
     if (self.domains.count)
         self.allBlacklists[self.scriptName] = self.domains;
     else
         [self.allBlacklists removeObjectForKey:self.scriptName];
-    NSDictionary* snapshot = [self.allBlacklists copy];
+    NSDictionary *snapshot = [self.allBlacklists copy];
     CFPreferencesSetAppValue(scriptBlacklistKey, (__bridge CFDictionaryRef)snapshot, domain);
     CFPreferencesAppSynchronize(domain);
     PFPrefsLog(@"persist script=%@ domains=%@ allKeys=%@", self.scriptName, self.domains, self.allBlacklists.allKeys);
 }
 
-- (void)viewWillAppear:(BOOL)animated
-{
+- (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     // Reload in case another process or earlier controller instance updated preferences.
     CFPreferencesAppSynchronize(domain);
     CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
-    NSMutableDictionary* latest = [NSMutableDictionary dictionary];
+    NSMutableDictionary *latest = [NSMutableDictionary dictionary];
     if (bl && CFGetTypeID(bl) == CFDictionaryGetTypeID())
-        [latest addEntriesFromDictionary:(__bridge NSDictionary*)bl];
+        [latest addEntriesFromDictionary:(__bridge NSDictionary *)bl];
     if (bl)
         CFRelease(bl);
-    NSArray* updated = [latest[self.scriptName] ?: @[] copy];
+    NSArray *updated = [latest[self.scriptName] ?: @[] copy];
     PFPrefsLog(@"viewWillAppear script=%@ latestKeys=%@ updatedDomains=%@ currentDomains=%@", self.scriptName,
                latest.allKeys, updated, self.domains);
-    if (![updated isEqualToArray:self.domains])
-    {
+    if (![updated isEqualToArray:self.domains]) {
         self.allBlacklists = latest;
         self.domains = [updated mutableCopy];
         // Rebuild specifiers list only if counts differ
