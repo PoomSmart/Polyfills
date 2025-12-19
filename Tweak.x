@@ -437,7 +437,10 @@ static const void *InjectedKey = &InjectedKey;
 
     %init;
 
-    if (!isIOSVersionOrNewer(16, 3) && CFPreferencesGetAppBooleanValue(userAgentKey, domain, NULL)) {
+    // User Agent hooks break the TestFlight app
+    BOOL isTestFlight = NSClassFromString(@"TestFlight.AppStateManager");
+
+    if (!isIOSVersionOrNewer(16, 3) && CFPreferencesGetAppBooleanValue(userAgentKey, domain, NULL) && !isTestFlight) {
         userAgentEnabled = YES;
         %init(UserAgent);
     }
