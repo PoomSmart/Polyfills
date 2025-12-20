@@ -79,6 +79,7 @@ static void _PFEnsureRulesLoaded(void) {
 static NSDictionary *_PFHeaderRuleForHost(NSString *host) {
     if (host.length == 0) return nil;
     _PFEnsureRulesLoaded();
+
     NSString *h = host.lowercaseString;
     NSDictionary *rule = s_rulesExact[h];
     if (rule) return rule;
@@ -86,6 +87,7 @@ static NSDictionary *_PFHeaderRuleForHost(NSString *host) {
         NSRange dot = [h rangeOfString:@"."];
         if (dot.location == NSNotFound) break;
         h = [h substringFromIndex:(dot.location + 1)];
+        if (h.length == 0) break;
         rule = s_rulesExact[h];
         if (rule) return rule;
     }
