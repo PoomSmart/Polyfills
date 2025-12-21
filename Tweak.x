@@ -387,8 +387,9 @@ static const void *InjectedKey = &InjectedKey;
 %hook NSMutableURLRequest
 
 - (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
-    if ([field caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame)
+    if ([value hasPrefix:@"Mozilla"] && [field caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) {
         value = IS_IPAD ? desktopUserAgent : mobileUserAgent;
+    }
     %orig(value, field);
 }
 
@@ -437,10 +438,7 @@ static const void *InjectedKey = &InjectedKey;
 
     %init;
 
-    // User Agent hooks break the TestFlight app
-    BOOL isTestFlight = NSClassFromString(@"TestFlight.AppStateManager") != nil;
-
-    if (!isIOSVersionOrNewer(16, 3) && CFPreferencesGetAppBooleanValue(userAgentKey, domain, NULL) && !isTestFlight) {
+    if (!isIOSVersionOrNewer(16, 3) && CFPreferencesGetAppBooleanValue(userAgentKey, domain, NULL)) {
         userAgentEnabled = YES;
         %init(UserAgent);
     }
