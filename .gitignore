@@ -3,4 +3,5 @@ packages/
 .DS_Store
 node_modules/
 .build-cache
+experimental/
 *.disabled

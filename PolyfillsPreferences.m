@@ -20,7 +20,23 @@ static NSArray *PFScriptDirs(void) {
     return @[ @"scripts-priority", @"scripts", @"scripts-post" ];
 }
 
+// Recursively locate first UITextField in a view hierarchy
+static UITextField *PFLocateTextField(UIView *root) {
+    if ([root isKindOfClass:[UITextField class]])
+        return (UITextField *)root;
+    for (UIView *sub in root.subviews) {
+        UITextField *f = PFLocateTextField(sub);
+        if (f)
+            return f;
+    }
+    return nil;
+}
+
 @interface PolyfillsRootListController : PSListController
+@end
+
+@interface PolyfillsGlobalBlacklistController : PSListController <UITextFieldDelegate>
+@property(nonatomic, strong) NSMutableArray *domains; // mutable list of lowercase domains
 @end
 
 @interface PolyfillsScriptBlacklistController : PSListController <UITextFieldDelegate>
@@ -130,14 +146,45 @@ static NSArray *PFScriptDirs(void) {
             [specs addObject:hi];
         }
 
-        PSSpecifier *scriptsGrp = [PSSpecifier preferenceSpecifierNamed:@"Scripts"
+        // Global Blacklist section
+        PSSpecifier *globalBlGrp = [PSSpecifier preferenceSpecifierNamed:@"Global Blacklist"
+                                                                  target:self
+                                                                     set:NULL
+                                                                     get:NULL
+                                                                  detail:Nil
+                                                                    cell:PSGroupCell
+                                                                    edit:Nil];
+        [globalBlGrp setProperty:@"Disable all polyfills for specific websites." forKey:@"footerText"];
+        [specs addObject:globalBlGrp];
+        
+        // Load global blacklist to show count
+        CFArrayRef globalBL = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
+        NSUInteger globalBlCount = 0;
+        if (globalBL && CFGetTypeID(globalBL) == CFArrayGetTypeID()) {
+            globalBlCount = CFArrayGetCount(globalBL);
+        }
+        if (globalBL) CFRelease(globalBL);
+        
+        NSString *globalBlLabel = [NSString stringWithFormat:@"Manage Domains (%lu)", (unsigned long)globalBlCount];
+        PSSpecifier *globalBlLink = [PSSpecifier preferenceSpecifierNamed:globalBlLabel
+                                                                   target:self
+                                                                      set:NULL
+                                                                      get:NULL
+                                                                   detail:[PolyfillsGlobalBlacklistController class]
+                                                                     cell:PSLinkCell
+                                                                     edit:Nil];
+        [globalBlLink setProperty:@YES forKey:@"enabled"];
+        [globalBlLink setProperty:@YES forKey:@"isController"];
+        [specs addObject:globalBlLink];
+
+        PSSpecifier *scriptsGrp = [PSSpecifier preferenceSpecifierNamed:@"Per-Script Blacklists"
                                                                  target:self
                                                                     set:NULL
                                                                     get:NULL
                                                                  detail:Nil
                                                                    cell:PSGroupCell
                                                                    edit:Nil];
-        [scriptsGrp setProperty:@"Toggle individual scripts and edit blacklists." forKey:@"footerText"];
+        [scriptsGrp setProperty:@"Fine-tune individual scripts for specific websites (advanced)." forKey:@"footerText"];
         [specs addObject:scriptsGrp];
 
         // Collect script metadata first so we can sort by version threshold.
@@ -263,7 +310,7 @@ static NSArray *PFScriptDirs(void) {
                                                              detail:Nil
                                                                cell:PSGroupCell
                                                                edit:Nil];
-        [footer setProperty:@"© 2025 PoomSmart" forKey:@"footerText"];
+        [footer setProperty:@"© 2025 - 2026 PoomSmart" forKey:@"footerText"];
         [specs addObject:footer];
         _specifiers = specs;
     }
@@ -287,6 +334,229 @@ static NSArray *PFScriptDirs(void) {
     CFPreferencesSetAppValue(disabledScriptsKey, (__bridge CFArrayRef)_disabledScripts.allObjects, domain);
     CFPreferencesAppSynchronize(domain);
     PFPrefsLog(@"Saved disabled scripts (%lu)", (unsigned long)_disabledScripts.count);
+}
+
+@end
+
+@implementation PolyfillsGlobalBlacklistController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave
+                                                      target:self
+                                                      action:@selector(saveAndClose)];
+}
+
+- (UIView *)_findFirstResponder:(UIView *)v {
+    if (v.isFirstResponder)
+        return v;
+    for (UIView *sub in v.subviews) {
+        UIView *r = [self _findFirstResponder:sub];
+        if (r)
+            return r;
+    }
+    return nil;
+}
+
+- (UITableView *)_tableView {
+    if ([self respondsToSelector:@selector(table)]) {
+        UITableView *t = [self performSelector:@selector(table)];
+        if ([t isKindOfClass:[UITableView class]])
+            return t;
+    }
+    if ([self.view isKindOfClass:[UITableView class]])
+        return (UITableView *)self.view;
+    for (UIView *sub in self.view.subviews)
+        if ([sub isKindOfClass:[UITableView class]])
+            return (UITableView *)sub;
+    return nil;
+}
+
+- (void)_commitCell:(UITableViewCell *)cell {
+    if (!cell)
+        return;
+    PSSpecifier *spec =
+        [cell respondsToSelector:@selector(specifier)] ? [cell performSelector:@selector(specifier)] : nil;
+    UITextField *tf = PFLocateTextField(cell.contentView ?: cell);
+    if (!spec && !tf)
+        return;
+    if (!spec) {
+        PFPrefsLog(@"_commitCell: no specifier for cell class=%@", NSStringFromClass(cell.class));
+        return;
+    }
+    NSString *text = tf ? (tf.text ?: @"") : @"";
+    PFPrefsLog(@"_commitCell specName=%@ cellClass=%@ text='%@'", [spec name], NSStringFromClass(cell.class), text);
+    if ([[spec name] isEqualToString:@"Add"]) {
+        NSString *vLower = text.lowercaseString;
+        if (vLower.length && ![self.domains containsObject:vLower]) {
+            PFPrefsLog(@"Adding domain from Add Domain cell (full reload path): %@", vLower);
+            [self.domains addObject:vLower];
+            if (tf)
+                tf.text = @"";
+            [spec setProperty:@"" forKey:@"value"];
+            [self persist];
+            _specifiers = nil;
+            [self reloadSpecifiers];
+        }
+    } else {
+        NSString *old = [spec propertyForKey:@"value"] ?: @"";
+        if (![old isEqualToString:text]) {
+            PFPrefsLog(@"Updating existing domain old=%@ new=%@", old, text);
+            [self setDomain:text specifier:spec];
+        }
+    }
+}
+
+- (void)_commitAllEdits {
+    UITableView *tv = [self _tableView];
+    if (!tv)
+        return;
+    PFPrefsLog(@"_commitAllEdits visibleCount=%lu", (unsigned long)tv.visibleCells.count);
+    for (UITableViewCell *cell in tv.visibleCells) {
+        [self _commitCell:cell];
+    }
+    for (PSSpecifier *spec in _specifiers) {
+        if ([spec cellType] == PSEditTextCell) {
+            UITableViewCell *cell = [self cachedCellForSpecifier:spec];
+            if (cell)
+                [self _commitCell:cell];
+        }
+    }
+}
+
+- (void)saveAndClose {
+    PFPrefsLog(@"saveAndClose initial domains=%@", self.domains);
+    [self.view endEditing:YES];
+    [self _commitAllEdits];
+    PFPrefsLog(@"saveAndClose after commit domains=%@", self.domains);
+    [self persist];
+}
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        CFPreferencesAppSynchronize(domain);
+        CFArrayRef globalBL = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
+        self.domains = [NSMutableArray array];
+        if (globalBL && CFGetTypeID(globalBL) == CFArrayGetTypeID()) {
+            for (id obj in (__bridge NSArray *)globalBL) {
+                if ([obj isKindOfClass:[NSString class]]) {
+                    [self.domains addObject:[(NSString *)obj lowercaseString]];
+                }
+            }
+        }
+        if (globalBL) CFRelease(globalBL);
+        
+        PFPrefsLog(@"Global blacklist init currentDomains=%@", self.domains);
+        NSMutableArray *specs = [NSMutableArray array];
+        PSSpecifier *grp = [PSSpecifier preferenceSpecifierNamed:@"Global Blacklist"
+                                                          target:self
+                                                             set:NULL
+                                                             get:NULL
+                                                          detail:Nil
+                                                            cell:PSGroupCell
+                                                            edit:Nil];
+        [grp setProperty:@"All polyfills will be disabled on these domains. Supports domains (example.com) and "
+                         @"host/path patterns (example.com/blog). Subdomains match automatically. To delete an entry, "
+                         @"clear its text and tap Save."
+                  forKey:@"footerText"];
+        [specs addObject:grp];
+        for (NSString *d in self.domains) {
+            PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
+                                                            target:self
+                                                               set:@selector(setDomain:specifier:)
+                                                               get:@selector(getDomain:)
+                                                            detail:Nil
+                                                              cell:PSEditTextCell
+                                                              edit:Nil];
+            [t setProperty:d forKey:@"value"];
+            [specs addObject:t];
+        }
+        PSSpecifier *add = [PSSpecifier preferenceSpecifierNamed:@"Add"
+                                                          target:self
+                                                             set:@selector(addDomain:specifier:)
+                                                             get:NULL
+                                                          detail:Nil
+                                                            cell:PSEditTextCell
+                                                            edit:Nil];
+        [add setProperty:@"" forKey:@"value"];
+        [specs addObject:add];
+        _specifiers = specs;
+    }
+    return _specifiers;
+}
+
+- (id)getDomain:(PSSpecifier *)spec {
+    return [spec propertyForKey:@"value"];
+}
+
+- (void)setDomain:(id)val specifier:(PSSpecifier *)spec {
+    NSString *old = [spec propertyForKey:@"value"];
+    NSString *v = [[val description] lowercaseString];
+    PFPrefsLog(@"setDomain old=%@ new=%@", old, v);
+    if (v.length == 0) {
+        [self.domains removeObject:old];
+        [self removeSpecifier:spec animated:YES];
+    } else {
+        NSUInteger idx = [self.domains indexOfObject:old];
+        if (idx != NSNotFound)
+            self.domains[idx] = v;
+        else if (![self.domains containsObject:v])
+            [self.domains addObject:v];
+        [spec setProperty:v forKey:@"value"];
+    }
+    [self persist];
+}
+
+- (void)addDomain:(id)val specifier:(PSSpecifier *)spec {
+    NSString *vLower = [[val description] lowercaseString];
+    PFPrefsLog(@"addDomain candidate=%@ existing=%@", vLower, self.domains);
+    if (vLower.length && ![self.domains containsObject:vLower]) {
+        [self.domains addObject:vLower];
+        NSInteger insertIndex = _specifiers.count - 1;
+        PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
+                                                        target:self
+                                                           set:@selector(setDomain:specifier:)
+                                                           get:@selector(getDomain:)
+                                                        detail:Nil
+                                                          cell:PSEditTextCell
+                                                          edit:Nil];
+        [t setProperty:vLower forKey:@"value"];
+        [_specifiers insertObject:t atIndex:insertIndex];
+        [self insertSpecifier:t atIndex:insertIndex animated:YES];
+        [spec setProperty:@"" forKey:@"value"];
+        [self persist];
+    }
+}
+
+- (void)persist {
+    NSArray *snapshot = [self.domains copy];
+    CFPreferencesSetAppValue(globalBlacklistKey, (__bridge CFArrayRef)snapshot, domain);
+    CFPreferencesAppSynchronize(domain);
+    PFPrefsLog(@"persist global blacklist domains=%@", self.domains);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    CFPreferencesAppSynchronize(domain);
+    CFArrayRef globalBL = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
+    NSMutableArray *updated = [NSMutableArray array];
+    if (globalBL && CFGetTypeID(globalBL) == CFArrayGetTypeID()) {
+        for (id obj in (__bridge NSArray *)globalBL) {
+            if ([obj isKindOfClass:[NSString class]]) {
+                [updated addObject:[(NSString *)obj lowercaseString]];
+            }
+        }
+    }
+    if (globalBL) CFRelease(globalBL);
+    
+    PFPrefsLog(@"viewWillAppear updatedDomains=%@ currentDomains=%@", updated, self.domains);
+    if (![updated isEqualToArray:self.domains]) {
+        self.domains = updated;
+        _specifiers = nil;
+        [self reloadSpecifiers];
+        PFPrefsLog(@"Rebuilt specifiers newDomains=%@", self.domains);
+    }
 }
 
 @end
@@ -324,18 +594,6 @@ static NSArray *PFScriptDirs(void) {
     for (UIView *sub in self.view.subviews)
         if ([sub isKindOfClass:[UITableView class]])
             return (UITableView *)sub;
-    return nil;
-}
-
-// Recursively locate first UITextField in a view hierarchy
-static UITextField *PFLocateTextField(UIView *root) {
-    if ([root isKindOfClass:[UITextField class]])
-        return (UITextField *)root;
-    for (UIView *sub in root.subviews) {
-        UITextField *f = PFLocateTextField(sub);
-        if (f)
-            return f;
-    }
     return nil;
 }
 

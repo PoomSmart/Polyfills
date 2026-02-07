@@ -300,7 +300,15 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
                 [combinedEndScripts appendString:postScripts];
             }
 
-            // Prepare per-site (and optional path) blacklist dictionary from preferences
+            // Load global blacklist (domains where ALL polyfills are disabled)
+            CFArrayRef globalBlacklistPref = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
+            NSArray *globalBlacklist = nil;
+            if (globalBlacklistPref && CFGetTypeID(globalBlacklistPref) == CFArrayGetTypeID()) {
+                globalBlacklist = [(__bridge NSArray *)globalBlacklistPref copy];
+            }
+            if (globalBlacklistPref) CFRelease(globalBlacklistPref);
+            
+            // Load per-script blacklist dictionary
             CFDictionaryRef blacklistPref = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
             NSDictionary *blacklistDict = nil;
             if (blacklistPref && CFGetTypeID(blacklistPref) == CFDictionaryGetTypeID()) {
@@ -308,14 +316,69 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
             }
             if (blacklistPref) CFRelease(blacklistPref);
 
-            // Build prelude defining window.__pfShouldRun for blacklist enforcement.
+            // Build combined blacklist dictionary with global blacklist under "*" key
+            NSMutableDictionary *combinedBlacklist = [NSMutableDictionary dictionary];
+            if (blacklistDict) {
+                [combinedBlacklist addEntriesFromDictionary:blacklistDict];
+            }
+            if (globalBlacklist && globalBlacklist.count > 0) {
+                combinedBlacklist[@"*"] = globalBlacklist;
+            }
+
+            // Build prelude defining window.__pfShouldRun for blacklist enforcement
             NSString *prelude = nil;
-            if (blacklistDict.count) {
-                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:blacklistDict options:0 error:nil];
+            if (combinedBlacklist.count > 0) {
+                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:combinedBlacklist options:0 error:nil];
                 NSString *json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
                 if (!json) json = @"{}";
+                
+                // JavaScript function that checks both global and per-script blacklists
                 NSMutableString *p = [NSMutableString string];
-                [p appendString:@"(function(){\nvar __pfBL = "]; [p appendString:json]; [p appendString:@";\nwindow.__pfShouldRun = function(script){var orig=script;script=String(script||'').toLowerCase();var arr=__pfBL[script];if(!arr||!arr.length)return true;var h=location.hostname.toLowerCase();var path=location.pathname;for(var i=0;i<arr.length;i++){var e=String(arr[i]||'').toLowerCase();if(!e)continue;var slash=e.indexOf('/');if(slash<0){if(h===e||h.endsWith('.'+e)){try{console.log('[Polyfills] Skipped '+orig+' on '+location.host+' (domain '+e+')');}catch(_){ }return false;}}else{var host=e.substring(0,slash);var pref=e.substring(slash+1);if(h===host||h.endsWith('.'+host)){var prefPath='/' + pref.replace(/^\\/+/, '');if(path===prefPath||path.startsWith(prefPath+(prefPath.endsWith('/')?'':'/'))||path.startsWith(prefPath)){try{console.log('[Polyfills] Skipped '+orig+' on '+location.host+path+' (prefix '+e+')');}catch(_){ }return false;}}}}return true;};\n})();\n"];
+                [p appendString:@"(function(){\n"];
+                [p appendString:@"var __pfBL = "];
+                [p appendString:json];
+                [p appendString:@";\n"];
+                [p appendString:@"window.__pfShouldRun = function(script){\n"];
+                [p appendString:@"  var orig=script;\n"];
+                [p appendString:@"  script=String(script||'').toLowerCase();\n"];
+                [p appendString:@"  var h=location.hostname.toLowerCase();\n"];
+                [p appendString:@"  var path=location.pathname;\n"];
+                [p appendString:@"  function matchesDomain(e){\n"];
+                [p appendString:@"    if(!e)return false;\n"];
+                [p appendString:@"    e=String(e).toLowerCase();\n"];
+                [p appendString:@"    var slash=e.indexOf('/');\n"];
+                [p appendString:@"    if(slash<0){\n"];
+                [p appendString:@"      return h===e||h.endsWith('.'+e);\n"];
+                [p appendString:@"    }else{\n"];
+                [p appendString:@"      var host=e.substring(0,slash);\n"];
+                [p appendString:@"      var pref=e.substring(slash+1);\n"];
+                [p appendString:@"      if(h===host||h.endsWith('.'+host)){\n"];
+                [p appendString:@"        var prefPath='/'+pref.replace(/^\\/+/,'');\n"];
+                [p appendString:@"        return path===prefPath||path.startsWith(prefPath+(prefPath.endsWith('/')?'':'/'));\n"];
+                [p appendString:@"      }\n"];
+                [p appendString:@"    }\n"];
+                [p appendString:@"    return false;\n"];
+                [p appendString:@"  }\n"];
+                [p appendString:@"  var globalArr=__pfBL['*'];\n"];
+                [p appendString:@"  if(globalArr&&globalArr.length){\n"];
+                [p appendString:@"    for(var i=0;i<globalArr.length;i++){\n"];
+                [p appendString:@"      if(matchesDomain(globalArr[i])){\n"];
+                [p appendString:@"        try{console.log('[Polyfills] Skipped '+orig+' (global blacklist)');}catch(_){}\n"];
+                [p appendString:@"        return false;\n"];
+                [p appendString:@"      }\n"];
+                [p appendString:@"    }\n"];
+                [p appendString:@"  }\n"];
+                [p appendString:@"  var arr=__pfBL[script];\n"];
+                [p appendString:@"  if(!arr||!arr.length)return true;\n"];
+                [p appendString:@"  for(var i=0;i<arr.length;i++){\n"];
+                [p appendString:@"    if(matchesDomain(arr[i])){\n"];
+                [p appendString:@"      try{console.log('[Polyfills] Skipped '+orig+' (script blacklist)');}catch(_){}\n"];
+                [p appendString:@"      return false;\n"];
+                [p appendString:@"    }\n"];
+                [p appendString:@"  }\n"];
+                [p appendString:@"  return true;\n"];
+                [p appendString:@"};\n"];
+                [p appendString:@"})();\n"];
                 prelude = p;
             }
 

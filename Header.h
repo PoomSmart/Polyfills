@@ -4,3 +4,4 @@
 #define headerInjectionKey CFSTR("PolyfillsHeaderInjectionEnabled")
 #define disabledScriptsKey CFSTR("PolyfillsDisabledScripts")
 #define scriptBlacklistKey CFSTR("PolyfillsScriptBlacklist")
+#define globalBlacklistKey CFSTR("PolyfillsGlobalBlacklist")
