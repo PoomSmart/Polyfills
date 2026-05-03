@@ -115,6 +115,7 @@
         if (id && document.getElementById(id)) return;
         const style = document.createElement('style');
         if (id) style.id = id;
+        style.setAttribute('data-css-layers-polyfill', '');
         style.textContent = css;
         document.head.appendChild(style);
     }
@@ -189,6 +190,7 @@
             } else if (
                 sheet.ownerNode &&
                 sheet.ownerNode.tagName === 'STYLE' &&
+                !sheet.ownerNode.hasAttribute('data-css-layers-polyfill') &&
                 sheet.ownerNode.textContent.includes('@layer') &&
                 !sheet.ownerNode.id?.startsWith('skip-polyfill-')
             ) {
@@ -211,6 +213,7 @@
                             // Check for new style elements
                             if (node.tagName === 'STYLE') {
                                 if (node.textContent.includes('@layer') &&
+                                    !node.hasAttribute('data-css-layers-polyfill') &&
                                     !node.id?.startsWith('skip-polyfill-')) {
                                     const cleaned = cleanCSS(node.textContent);
                                     injectStyle(cleaned);
@@ -229,6 +232,7 @@
                                 if (styleNodes) {
                                     for (const styleNode of styleNodes) {
                                         if (styleNode.textContent.includes('@layer') &&
+                                            !styleNode.hasAttribute('data-css-layers-polyfill') &&
                                             !styleNode.id?.startsWith('skip-polyfill-')) {
                                             const cleaned = cleanCSS(styleNode.textContent);
                                             injectStyle(cleaned);

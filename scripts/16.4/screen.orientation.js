@@ -1,4 +1,4 @@
-// https://gist.github.com/fuweichin/61005d22fffba63218f04a8276481c22 + Claude 4.5 Sonnet
+// https://gist.github.com/fuweichin/61005d22fffba63218f04a8276481c22 + Claude 4.6 Sonnet
 (function () {
     "use strict";
 
@@ -7,11 +7,12 @@
         var weakMap = new WeakMap();
         ScreenOrientation = (function () {
             function ScreenOrientation() {
-                EventTarget.call(this);
-                this._onchange = null;
-                Object.defineProperties(this, {
+                var _this = Reflect.construct(EventTarget, [], ScreenOrientation);
+                _this._onchange = null;
+                Object.defineProperties(_this, {
                     _onchange: { enumerable: false }
                 });
+                return _this;
             }
 
             // Inherit from EventTarget
