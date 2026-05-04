@@ -9,6 +9,9 @@
   "keywords": [],
   "author": "PoomSmart",
   "license": "ISC",
+  "scripts": {
+    "serve": "npx serve playground"
+  },
   "bugs": {
     "url": "https://github.com/PoomSmart/Polyfills/issues"
   },
