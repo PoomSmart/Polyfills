@@ -1,5 +1,7 @@
 # Recommended WebKit Experimental Features to Enable
 
+The features have accumulated across iOS versions. You may or may not find some of the features in this list.
+
 - `CSS Cascade Layers` (e.g. CSS `@layer`)
 - `CSS color-mix()`
 - `CSS Containment` (e.g. CSS `contain: paint;`)
