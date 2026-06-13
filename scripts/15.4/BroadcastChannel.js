@@ -33,7 +33,30 @@
     let _channels = null; // List of channels
     let _tabId = null; // Current window browser tab identifier (see IE problem, later)
     let _storageListener = null; // Store reference to the storage listener
+    let _cleanupTimer = null; // Shared cleanup timer for localStorage keys
+    let _pendingCleanupKeys = []; // Keys awaiting cleanup
     const _prefix = "polyBC_"; // prefix to identify localStorage keys.
+
+    const scheduleStorageCleanup = (key) => {
+        _pendingCleanupKeys.push(key);
+        if (_cleanupTimer !== null) {
+            return;
+        }
+
+        _cleanupTimer = setTimeout(() => {
+            const keys = _pendingCleanupKeys;
+            _pendingCleanupKeys = [];
+            _cleanupTimer = null;
+
+            for (let i = 0; i < keys.length; i++) {
+                try {
+                    context.localStorage.removeItem(keys[i]);
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+            }
+        }, 50);
+    };
 
     /**
      * Utils
@@ -135,7 +158,8 @@
                 _channels[obj.channelId]
             ) {
                 const subscribers = _channels[obj.channelId];
-                subscribers.forEach((sub) => {
+                for (let i = 0; i < subscribers.length; i++) {
+                    const sub = subscribers[i];
                     if (!sub.closed) {
                         // Create proper MessageEvent with data property
                         const event = new MessageEvent("message", {
@@ -152,7 +176,7 @@
                             sub.onmessage(event);
                         }
                     }
-                });
+                }
                 // Remove the item for safety.
                 context.localStorage.removeItem(key);
             }
@@ -265,9 +289,10 @@
 
             // SAME-TAB communication.
             const subscribers = _channels[this.channelId] || [];
-            subscribers.forEach((sub) => {
+            for (let i = 0; i < subscribers.length; i++) {
+                const sub = subscribers[i];
                 // We don't send the message to ourselves.
-                if (sub.closed || sub._instanceId === this._instanceId) return;
+                if (sub.closed || sub._instanceId === this._instanceId) continue;
                 // Create proper MessageEvent with data property
                 const event = new MessageEvent("message", {
                     data: msgObj.data,
@@ -281,7 +306,7 @@
                 if (typeof sub.onmessage === "function") {
                     sub.onmessage(event);
                 }
-            });
+            }
 
             // CROSS-TAB communication.
             // Adds some properties to communicate among the tabs.
@@ -299,14 +324,8 @@
                 }`;
                 // Set localStorage item (and, after that, removes it).
                 context.localStorage.setItem(lsKey, editedJSON);
-                // Use shorter timeout to reduce race conditions
-                setTimeout(() => {
-                    try {
-                        context.localStorage.removeItem(lsKey);
-                    } catch (e) {
-                        // Ignore cleanup errors
-                    }
-                }, 100);
+                // Batch key cleanup to avoid creating one timer per message.
+                scheduleStorageCleanup(lsKey);
             } catch (ex) {
                 // Handle localStorage quota exceeded or other storage errors
                 const errorEvent = new MessageEvent("messageerror", {
@@ -346,6 +365,11 @@
             if (isEmpty(_channels) && _storageListener) {
                 context.removeEventListener("storage", _storageListener);
                 _storageListener = null;
+                if (_cleanupTimer !== null) {
+                    clearTimeout(_cleanupTimer);
+                    _cleanupTimer = null;
+                }
+                _pendingCleanupKeys = [];
             }
         }
     }

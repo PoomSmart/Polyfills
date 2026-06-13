@@ -16,6 +16,12 @@
     if (window.__mediaQueryRangePolyfillApplied) return;
     window.__mediaQueryRangePolyfillApplied = true;
 
+    const processedSheetSignatures = new Map();
+    const injectedIds = new Set();
+    const RESCAN_COOLDOWN_MS = 500;
+    let lastRescanAt = 0;
+    let rescanScheduled = false;
+
     const FEATURES = new Set([
         "width",
         "height",
@@ -498,11 +504,25 @@
         });
     }
 
+    function hashString(input) {
+        let h = 0;
+        for (let i = 0; i < input.length; i++) {
+            h = ((h << 5) - h + input.charCodeAt(i)) | 0;
+        }
+        return (h >>> 0).toString(36);
+    }
+
     function injectStyle(css) {
         if (!css) return;
+        const id = `media-range-${hashString(css)}`;
+        if (injectedIds.has(id) || document.getElementById(id)) {
+            return;
+        }
         const style = document.createElement("style");
+        style.id = id;
         style.textContent = css;
         document.head.appendChild(style);
+        injectedIds.add(id);
     }
 
     function getStyleSheetText(sheet) {
@@ -515,13 +535,19 @@
     }
 
     async function processStyleSheet(sheet) {
+        const sheetKey = sheet.href || (sheet.ownerNode && sheet.ownerNode.id) || "inline";
         let text = getStyleSheetText(sheet);
         if (text && /@media\s+[^\{]*[<>]=?/.test(text)) {
+            const signature = `${sheetKey}::${text.length}`;
+            if (processedSheetSignatures.get(sheetKey) === signature) {
+                return;
+            }
             // early filter for range ops
             const transformed = transformCSS(text);
             if (transformed !== text) {
                 injectStyle(transformed);
             }
+            processedSheetSignatures.set(sheetKey, signature);
             return;
         }
         // If we couldn't get text (cross-origin) we attempt fetch if same-origin
@@ -566,6 +592,19 @@
         document.querySelectorAll("style").forEach(processInlineStyleTag);
     }
 
+    function queueRescan() {
+        if (rescanScheduled) return;
+        rescanScheduled = true;
+        const elapsed = Date.now() - lastRescanAt;
+        const wait = Math.max(0, RESCAN_COOLDOWN_MS - elapsed);
+        clearTimeout(window.__mediaRangeDebounce);
+        window.__mediaRangeDebounce = setTimeout(() => {
+            rescanScheduled = false;
+            lastRescanAt = Date.now();
+            processAll();
+        }, wait);
+    }
+
     function setupObserver() {
         const obs = new MutationObserver((muts) => {
             let needs = false;
@@ -602,10 +641,7 @@
                 }
             }
             if (needs) {
-                clearTimeout(window.__mediaRangeDebounce);
-                window.__mediaRangeDebounce = setTimeout(() => {
-                    processAll();
-                }, 80);
+                queueRescan();
             }
         });
         obs.observe(document, {

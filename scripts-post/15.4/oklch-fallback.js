@@ -26,6 +26,11 @@
         observerEvents: 0,
         errors: 0,
     };
+    const REPROCESS_COOLDOWN_MS = 600;
+    let lastFullProcessAt = 0;
+    let fullProcessScheduled = false;
+    let hasPerformedInlineStyleScan = false;
+    let hasPerformedElementFallbackPass = false;
 
     if (window.__oklchFallbackApplied) return;
     window.__oklchFallbackApplied = true;
@@ -1088,7 +1093,8 @@
         return false;
     }
 
-    async function processAllStyleSheets() {
+    async function processAllStyleSheets(options) {
+        options = options || {};
         const links = Array.from(
             document.querySelectorAll('link[rel="stylesheet"]')
         );
@@ -1121,49 +1127,63 @@
         // Inline <style> tags text-based processing (covers cases not represented in CSSOM)
         document.querySelectorAll("style").forEach(processStyleTagNode);
 
-        // Inline style="..." attributes
-        document.querySelectorAll('[style*="oklch("]').forEach((el) => {
-            try {
-                const txt = el.getAttribute("style");
-                if (!txt) return;
-                const out = replaceOKLCHInText(txt);
-                if (out !== txt) {
-                    el.setAttribute("style", out);
-                    stats.inlineStyleAttrsProcessed++;
+        // Inline style="..." attributes are expensive to scan globally on every pass.
+        // Do one full pass, then rely on mutation observer attribute updates.
+        if (!hasPerformedInlineStyleScan || options.forceInlineScan) {
+            document.querySelectorAll('[style*="oklch("]').forEach((el) => {
+                try {
+                    const txt = el.getAttribute("style");
+                    if (!txt) return;
+                    const out = replaceOKLCHInText(txt);
+                    if (out !== txt) {
+                        el.setAttribute("style", out);
+                        stats.inlineStyleAttrsProcessed++;
+                    }
+                } catch (e) {
+                    dbg("Failed processing inline style for element:", el, e);
                 }
-            } catch (e) {
-                dbg("Failed processing inline style for element:", el, e);
-            }
-        });
-        // After stylesheet-level rewrites, also try per-element fallbacks for dynamic var()/calc() usages
-        const appliedBefore = stats.rulesApplied;
-        try {
-            applyElementFallbacks();
-        } catch (e) {
-            dbg("applyElementFallbacks failed", e);
-            stats.errors++;
+            });
+            hasPerformedInlineStyleScan = true;
         }
-        if (!OKLCH_RULE_INDEX.length || stats.rulesApplied === appliedBefore) {
-            dbg(
-                "matches()-based path applied none; trying query-based application"
-            );
+
+        // Per-element fallbacks are the most CPU-heavy part. Run once unless forced.
+        if (!hasPerformedElementFallbackPass || options.forceElementFallbacks) {
+            const appliedBefore = stats.rulesApplied;
             try {
-                applyIndexedRulesByQuery();
+                applyElementFallbacks();
             } catch (e) {
-                dbg("applyIndexedRulesByQuery failed", e);
+                dbg("applyElementFallbacks failed", e);
                 stats.errors++;
             }
-        }
-        if (!OKLCH_RULE_INDEX.length || stats.rulesApplied === appliedBefore) {
-            dbg(
-                "No indexable rules or nothing applied; trying computed-style fallback"
-            );
-            try {
-                applyComputedStyleFallbacks();
-            } catch (e) {
-                dbg("applyComputedStyleFallbacks failed", e);
-                stats.errors++;
+            if (
+                !OKLCH_RULE_INDEX.length ||
+                stats.rulesApplied === appliedBefore
+            ) {
+                dbg(
+                    "matches()-based path applied none; trying query-based application"
+                );
+                try {
+                    applyIndexedRulesByQuery();
+                } catch (e) {
+                    dbg("applyIndexedRulesByQuery failed", e);
+                    stats.errors++;
+                }
             }
+            if (
+                !OKLCH_RULE_INDEX.length ||
+                stats.rulesApplied === appliedBefore
+            ) {
+                dbg(
+                    "No indexable rules or nothing applied; trying computed-style fallback"
+                );
+                try {
+                    applyComputedStyleFallbacks();
+                } catch (e) {
+                    dbg("applyComputedStyleFallbacks failed", e);
+                    stats.errors++;
+                }
+            }
+            hasPerformedElementFallbackPass = true;
         }
         dbg(
             "Pass summary:",
@@ -1180,6 +1200,19 @@
         );
     }
 
+    function queueFullProcess(options) {
+        if (fullProcessScheduled) return;
+        fullProcessScheduled = true;
+        const elapsed = Date.now() - lastFullProcessAt;
+        const wait = Math.max(0, REPROCESS_COOLDOWN_MS - elapsed);
+        clearTimeout(window.__oklchDebounce);
+        window.__oklchDebounce = setTimeout(() => {
+            fullProcessScheduled = false;
+            lastFullProcessAt = Date.now();
+            processAllStyleSheets(options || {});
+        }, wait);
+    }
+
     // Observe dynamic additions/changes
     function setupMutationObserver() {
         const observer = new MutationObserver((mutations) => {
@@ -1191,7 +1224,6 @@
                         if (node.nodeType !== 1) continue;
                         if (node.tagName === "STYLE") {
                             processStyleTagNode(node);
-                            needs = true;
                         } else if (
                             node.tagName === "LINK" &&
                             node.rel === "stylesheet"
@@ -1200,10 +1232,31 @@
                         } else {
                             const styleNodes =
                                 node.querySelectorAll &&
-                                node.querySelectorAll(
-                                    'style, link[rel="stylesheet"], [style*="oklch("]'
-                                );
-                            if (styleNodes && styleNodes.length) needs = true;
+                                node.querySelectorAll("style");
+                            if (styleNodes && styleNodes.length) {
+                                styleNodes.forEach(processStyleTagNode);
+                            }
+
+                            const inlineStyledNodes =
+                                node.querySelectorAll &&
+                                node.querySelectorAll('[style*="oklch("]');
+                            if (inlineStyledNodes && inlineStyledNodes.length) {
+                                inlineStyledNodes.forEach((el) => {
+                                    try {
+                                        const txt = el.getAttribute("style");
+                                        const out = replaceOKLCHInText(txt || "");
+                                        if (out !== txt) {
+                                            el.setAttribute("style", out);
+                                            stats.inlineStyleAttrsProcessed++;
+                                        }
+                                    } catch (_) {}
+                                });
+                            }
+
+                            const newLinks =
+                                node.querySelectorAll &&
+                                node.querySelectorAll('link[rel="stylesheet"]');
+                            if (newLinks && newLinks.length) needs = true;
                         }
                     }
                 } else if (m.type === "attributes") {
@@ -1216,13 +1269,23 @@
                         (m.attributeName === "style" &&
                             /oklch\(/i.test(t.getAttribute("style") || ""))
                     ) {
-                        needs = true;
+                        if (m.attributeName === "style") {
+                            try {
+                                const styleText = t.getAttribute("style") || "";
+                                const out = replaceOKLCHInText(styleText);
+                                if (out !== styleText) {
+                                    t.setAttribute("style", out);
+                                    stats.inlineStyleAttrsProcessed++;
+                                }
+                            } catch (_) {}
+                        } else {
+                            needs = true;
+                        }
                     }
                 }
             }
             if (needs) {
-                clearTimeout(window.__oklchDebounce);
-                window.__oklchDebounce = setTimeout(processAllStyleSheets, 100);
+                queueFullProcess();
             }
         });
 
@@ -1236,6 +1299,6 @@
     }
 
     dbg("OKLCH fallback enabled");
-    processAllStyleSheets();
+    processAllStyleSheets({ forceInlineScan: true, forceElementFallbacks: true });
     setupMutationObserver();
 })();

@@ -33,6 +33,7 @@
 #import "Header.h"
 
 BOOL userAgentEnabled = NO;
+static const void *PendingUserAgentURLKey = &PendingUserAgentURLKey;
 
 @interface _SFReloadOptionsController : NSObject
 @end
@@ -42,6 +43,55 @@ static BOOL isIOSVersionOrNewer(NSInteger major, NSInteger minor) {
     if (version.majorVersion > major) return YES;
     if (version.majorVersion == major && version.minorVersion >= minor) return YES;
     return NO;
+}
+
+
+static BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
+    if (entry.length == 0 || url == nil) return NO;
+    NSString *host = url.host.lowercaseString ?: @"";
+    NSString *path = url.path ?: @"/";
+    NSString *rule = entry.lowercaseString;
+    NSRange slash = [rule rangeOfString:@"/"];
+    if (slash.location == NSNotFound) {
+        return [host isEqualToString:rule] || [host hasSuffix:[@"." stringByAppendingString:rule]];
+    }
+
+    NSString *ruleHost = [rule substringToIndex:slash.location];
+    NSString *rulePath = [rule substringFromIndex:slash.location];
+    if (!([host isEqualToString:ruleHost] || [host hasSuffix:[@"." stringByAppendingString:ruleHost]])) {
+        return NO;
+    }
+    return [path isEqualToString:rulePath] || [path hasPrefix:[rulePath hasSuffix:@"/"] ? rulePath : [rulePath stringByAppendingString:@"/"]];
+}
+
+static BOOL isUserAgentBlacklistedForURL(NSURL *url) {
+    NSArray<NSString *> *blacklist = [PolyfillsBlacklistManager mergedUserAgentBlacklist];
+    if (url == nil || blacklist.count == 0) return NO;
+    for (NSString *entry in blacklist) {
+        if (PFDomainPathMatchesURL(entry, url)) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static NSURL *currentUserAgentURL(WKWebView *webView, NSURL *fallbackURL) {
+    NSURL *resolved = fallbackURL;
+    if (resolved == nil && webView != nil) {
+        resolved = webView.URL;
+    }
+    if (resolved == nil && webView != nil) {
+        resolved = objc_getAssociatedObject(webView, PendingUserAgentURLKey);
+    }
+    return resolved;
+}
+
+static void rememberPendingUserAgentURL(WKWebView *webView, NSURL *url) {
+    if (webView == nil) return;
+    objc_setAssociatedObject(webView,
+                             PendingUserAgentURLKey,
+                             url,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 // Helper function to load JavaScript content from a file
@@ -249,17 +299,29 @@ static NSString *getFinalUA(NSString *defaultUA) {
 }
 
 static void setUserAgent(WKWebView *webView, NSString *userAgent) {
-    if (!userAgent) return;
     if ([webView respondsToSelector:@selector(setCustomUserAgent:)])
         webView.customUserAgent = userAgent;
     else {
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-        [defaults registerDefaults:@{@"UserAgent": userAgent}];
+        if (userAgent) {
+            [defaults registerDefaults:@{@"UserAgent": userAgent}];
+        } else {
+            [defaults removeObjectForKey:@"UserAgent"];
+        }
     }
 }
 
-static void overrideUserAgent(WKWebView *webView) {
+static void applyUserAgentOverrideForURL(WKWebView *webView, NSURL *url) {
     if (isIOSVersionOrNewer(16, 3) || !userAgentEnabled) return;
+    NSURL *resolvedURL = currentUserAgentURL(webView, url);
+    HBLogDebug(@"Applying user agent override for URL: %@", resolvedURL);
+    if (resolvedURL == nil) {
+        return;
+    }
+    if (isUserAgentBlacklistedForURL(resolvedURL)) {
+        setUserAgent(webView, nil);
+        return;
+    }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability-new"
     WKContentMode contentMode = WKContentModeRecommended;
@@ -268,6 +330,28 @@ static void overrideUserAgent(WKWebView *webView) {
     NSString *ua = IS_IPAD || contentMode == WKContentModeDesktop ? desktopUserAgent : mobileUserAgent;
 #pragma clang diagnostic pop
     setUserAgent(webView, ua);
+}
+
+static void applyDefaultUserAgentOverride(WKWebView *webView) {
+    if (isIOSVersionOrNewer(16, 3) || !userAgentEnabled) return;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+    WKContentMode contentMode = WKContentModeRecommended;
+    if (isIOSVersionOrNewer(13, 0))
+        contentMode = webView.configuration.defaultWebpagePreferences.preferredContentMode;
+    NSString *ua = IS_IPAD || contentMode == WKContentModeDesktop ? desktopUserAgent : mobileUserAgent;
+#pragma clang diagnostic pop
+    HBLogDebug(@"Applying default user agent override before URL is known");
+    setUserAgent(webView, ua);
+}
+
+static void overrideUserAgent(WKWebView *webView) {
+    NSURL *resolvedURL = currentUserAgentURL(webView, nil);
+    if (resolvedURL) {
+        applyUserAgentOverrideForURL(webView, resolvedURL);
+        return;
+    }
+    applyDefaultUserAgentOverride(webView);
 }
 
 // Function to load and inject scripts with optimized batching
@@ -300,21 +384,8 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
                 [combinedEndScripts appendString:postScripts];
             }
 
-            // Load global blacklist (domains where ALL polyfills are disabled)
-            CFArrayRef globalBlacklistPref = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
-            NSArray *globalBlacklist = nil;
-            if (globalBlacklistPref && CFGetTypeID(globalBlacklistPref) == CFArrayGetTypeID()) {
-                globalBlacklist = [(__bridge NSArray *)globalBlacklistPref copy];
-            }
-            if (globalBlacklistPref) CFRelease(globalBlacklistPref);
-            
-            // Load per-script blacklist dictionary
-            CFDictionaryRef blacklistPref = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
-            NSDictionary *blacklistDict = nil;
-            if (blacklistPref && CFGetTypeID(blacklistPref) == CFDictionaryGetTypeID()) {
-                blacklistDict = [(__bridge NSDictionary *)blacklistPref copy];
-            }
-            if (blacklistPref) CFRelease(blacklistPref);
+            NSArray *globalBlacklist = [PolyfillsBlacklistManager mergedGlobalBlacklist];
+            NSDictionary *blacklistDict = [PolyfillsBlacklistManager mergedScriptBlacklists];
 
             // Build combined blacklist dictionary with global blacklist under "*" key
             NSMutableDictionary *combinedBlacklist = [NSMutableDictionary dictionary];
@@ -433,14 +504,30 @@ static const void *InjectedKey = &InjectedKey;
     return webView;
 }
 
+- (WKNavigation *)loadRequest:(NSURLRequest *)request {
+    rememberPendingUserAgentURL(self, request.URL);
+    applyUserAgentOverrideForURL(self, request.URL);
+    return %orig;
+}
+
 - (void)setCustomUserAgent:(NSString *)customUserAgent {
     HBLogDebug(@"Polyfills Setting custom user agent: %@", customUserAgent);
-    %orig(userAgentEnabled ? getFinalUA(customUserAgent) : customUserAgent);
+    NSURL *resolvedURL = currentUserAgentURL(self, nil);
+    if (userAgentEnabled && resolvedURL != nil && !isUserAgentBlacklistedForURL(resolvedURL)) {
+        %orig(getFinalUA(customUserAgent));
+        return;
+    }
+    %orig(customUserAgent);
 }
 
 - (void)setApplicationNameForUserAgent:(NSString *)applicationNameForUserAgent {
     HBLogDebug(@"Polyfills Setting application name for user agent: %@", applicationNameForUserAgent);
-    %orig(userAgentEnabled ? getFinalUA(applicationNameForUserAgent) : applicationNameForUserAgent);
+    NSURL *resolvedURL = currentUserAgentURL(self, nil);
+    if (userAgentEnabled && resolvedURL != nil && !isUserAgentBlacklistedForURL(resolvedURL)) {
+        %orig(getFinalUA(applicationNameForUserAgent));
+        return;
+    }
+    %orig(applicationNameForUserAgent);
 }
 
 %end
@@ -451,7 +538,9 @@ static const void *InjectedKey = &InjectedKey;
 
 - (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
     if ([value hasPrefix:@"Mozilla"] && [field caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) {
-        value = IS_IPAD ? desktopUserAgent : mobileUserAgent;
+        if (!isUserAgentBlacklistedForURL(self.URL)) {
+            value = IS_IPAD ? desktopUserAgent : mobileUserAgent;
+        }
     }
     %orig(value, field);
 }
@@ -463,14 +552,14 @@ static const void *InjectedKey = &InjectedKey;
 - (void)didMarkURLAsNeedingDesktopUserAgent:(id)arg1 {
     HBLogDebug(@"Polyfills didMarkURLAsNeedingDesktopUserAgent called");
     WKWebView *webView = [self valueForKey:@"_webView"];
-    if (webView) setUserAgent(webView, desktopUserAgent);
+    if (webView && !isUserAgentBlacklistedForURL(webView.URL)) setUserAgent(webView, desktopUserAgent);
     %orig;
 }
 
 - (void)didMarkURLAsNeedingStandardUserAgent:(id)arg1 {
     HBLogDebug(@"Polyfills didMarkURLAsNeedingStandardUserAgent called");
     WKWebView *webView = [self valueForKey:@"_webView"];
-    if (webView) setUserAgent(webView, mobileUserAgent);
+    if (webView) applyUserAgentOverrideForURL(webView, webView.URL);
     %orig;
 }
 

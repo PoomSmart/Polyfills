@@ -3,6 +3,9 @@
     if (window.__cssLayersPolyfillApplied) return;
     window.__cssLayersPolyfillApplied = true;
 
+    const processedSheetSignatures = new Map();
+    const injectedStyleIds = new Set();
+
     // Parsing utilities
     function cleanCSS(css) {
         return parseBlocks(css).join('');
@@ -111,13 +114,25 @@
         return { blockContent, endIndex: i + 1 };
     }
 
+    function hashString(input) {
+        let h = 0;
+        for (let i = 0; i < input.length; i++) {
+            h = ((h << 5) - h + input.charCodeAt(i)) | 0;
+        }
+        return (h >>> 0).toString(36);
+    }
+
     function injectStyle(css, id) {
-        if (id && document.getElementById(id)) return;
+        const resolvedId = id || `css-layers-${hashString(css)}`;
+        if (injectedStyleIds.has(resolvedId) || document.getElementById(resolvedId)) {
+            return;
+        }
         const style = document.createElement('style');
-        if (id) style.id = id;
+        style.id = resolvedId;
         style.setAttribute('data-css-layers-polyfill', '');
         style.textContent = css;
         document.head.appendChild(style);
+        injectedStyleIds.add(resolvedId);
     }
 
     function getStyleSheetText(sheet) {
@@ -171,10 +186,15 @@
                 // Try to process all stylesheets using direct cssRules access first
                 const cssText = getStyleSheetText(sheet);
                 if (cssText) {
+                    const signature = `${sheet.href}::${cssText.length}`;
+                    if (processedSheetSignatures.get(sheet.href) === signature) {
+                        continue;
+                    }
                     const cleaned = cleanCSS(cssText);
                     if (cleaned.trim()) {
                         injectStyle(cleaned);
                     }
+                    processedSheetSignatures.set(sheet.href, signature);
                     continue;
                 }
 
@@ -195,8 +215,14 @@
                 !sheet.ownerNode.id?.startsWith('skip-polyfill-')
             ) {
                 const original = sheet.ownerNode.textContent;
+                const inlineId = sheet.ownerNode.id || hashString(original);
+                const signature = `inline::${inlineId}::${original.length}`;
+                if (processedSheetSignatures.get(inlineId) === signature) {
+                    continue;
+                }
                 const cleaned = cleanCSS(original);
                 injectStyle(cleaned);
+                processedSheetSignatures.set(inlineId, signature);
             }
         }
     }
@@ -262,7 +288,7 @@
                 clearTimeout(window.__cssLayersDebounceTimer);
                 window.__cssLayersDebounceTimer = setTimeout(() => {
                     processStyleSheets();
-                }, 100);
+                }, 250);
             }
         });
 

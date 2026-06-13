@@ -18,6 +18,9 @@ function polyfill() {
     // globals
     var Element = w.HTMLElement || w.Element;
     var SCROLL_TIME = 468;
+    var activeElementContexts =
+        typeof WeakMap === "function" ? new WeakMap() : null;
+    var activeWindowContext = null;
 
     // object gathering original scroll methods
     var original = {
@@ -152,6 +155,10 @@ function polyfill() {
      * @returns {undefined}
      */
     function step(context) {
+        if (context.cancelled) {
+            return;
+        }
+
         var time = now();
         var value;
         var currentX;
@@ -172,6 +179,16 @@ function polyfill() {
         // scroll more if we have not reached our destination
         if (currentX !== context.x || currentY !== context.y) {
             w.requestAnimationFrame(step.bind(w, context));
+            return;
+        }
+
+        // Clear completion state so future calls can run independently.
+        if (context.scrollable === w) {
+            if (activeWindowContext === context) {
+                activeWindowContext = null;
+            }
+        } else if (activeElementContexts && activeElementContexts.get(context.scrollable) === context) {
+            activeElementContexts.delete(context.scrollable);
         }
     }
 
@@ -188,6 +205,7 @@ function polyfill() {
         var startX;
         var startY;
         var method;
+        var prevContext;
         var startTime = now();
 
         // define scroll context
@@ -203,8 +221,18 @@ function polyfill() {
             method = scrollElement;
         }
 
+        // Avoid stacking multiple requestAnimationFrame chains per target.
+        if (scrollable === w) {
+            prevContext = activeWindowContext;
+        } else if (activeElementContexts) {
+            prevContext = activeElementContexts.get(scrollable);
+        }
+        if (prevContext) {
+            prevContext.cancelled = true;
+        }
+
         // scroll looping over a frame
-        step({
+        var context = {
             scrollable: scrollable,
             method: method,
             startTime: startTime,
@@ -212,7 +240,16 @@ function polyfill() {
             startY: startY,
             x: x,
             y: y,
-        });
+            cancelled: false,
+        };
+
+        if (scrollable === w) {
+            activeWindowContext = context;
+        } else if (activeElementContexts) {
+            activeElementContexts.set(scrollable, context);
+        }
+
+        step(context);
     }
 
     // ORIGINAL METHODS OVERRIDES

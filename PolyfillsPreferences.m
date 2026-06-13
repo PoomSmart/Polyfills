@@ -39,6 +39,10 @@ static UITextField *PFLocateTextField(UIView *root) {
 @property(nonatomic, strong) NSMutableArray *domains; // mutable list of lowercase domains
 @end
 
+@interface PolyfillsUserAgentBlacklistController : PSListController <UITextFieldDelegate>
+@property(nonatomic, strong) NSMutableArray *domains; // mutable list of lowercase domains
+@end
+
 @interface PolyfillsScriptBlacklistController : PSListController <UITextFieldDelegate>
 @property(nonatomic, strong) NSString *scriptName;               // lowercase
 @property(nonatomic, strong) NSMutableArray *domains;            // mutable list of lowercase domains
@@ -116,6 +120,26 @@ static UITextField *PFLocateTextField(UIView *root) {
         [ua setProperty:(__bridge NSString *)userAgentKey forKey:@"key"];
         [ua setProperty:@NO forKey:@"default"];
         [specs addObject:ua];
+
+          CFArrayRef uaBL = (CFArrayRef)CFPreferencesCopyAppValue(userAgentBlacklistKey, domain);
+          NSUInteger uaBlCount = 0;
+          if (uaBL && CFGetTypeID(uaBL) == CFArrayGetTypeID()) {
+                uaBlCount = CFArrayGetCount(uaBL);
+          }
+          if (uaBL) CFRelease(uaBL);
+
+          NSString *uaBlLabel = [NSString stringWithFormat:@"Manage Blacklist (%lu)", (unsigned long)uaBlCount];
+          PSSpecifier *uaBlLink = [PSSpecifier preferenceSpecifierNamed:uaBlLabel
+                                                                                    target:self
+                                                                                        set:NULL
+                                                                                        get:NULL
+                                                                                    detail:[PolyfillsUserAgentBlacklistController class]
+                                                                                      cell:PSLinkCell
+                                                                                      edit:Nil];
+          [uaBlLink setProperty:@YES forKey:@"enabled"];
+          [uaBlLink setProperty:@YES forKey:@"isController"];
+          [specs addObject:uaBlLink];
+
         NSOperatingSystemVersion osv = [[NSProcessInfo processInfo] operatingSystemVersion];
         // iOS version gate: show only on iOS 11.0 - 16.3 inclusive
         BOOL showHeaderToggle = (osv.majorVersion == 11 || osv.majorVersion > 11) && // >=11
@@ -556,6 +580,216 @@ static UITextField *PFLocateTextField(UIView *root) {
         _specifiers = nil;
         [self reloadSpecifiers];
         PFPrefsLog(@"Rebuilt specifiers newDomains=%@", self.domains);
+    }
+}
+
+@end
+
+@implementation PolyfillsUserAgentBlacklistController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave
+                                                      target:self
+                                                      action:@selector(saveAndClose)];
+}
+
+- (UIView *)_findFirstResponder:(UIView *)v {
+    if (v.isFirstResponder)
+        return v;
+    for (UIView *sub in v.subviews) {
+        UIView *r = [self _findFirstResponder:sub];
+        if (r)
+            return r;
+    }
+    return nil;
+}
+
+- (UITableView *)_tableView {
+    if ([self respondsToSelector:@selector(table)]) {
+        UITableView *t = [self performSelector:@selector(table)];
+        if ([t isKindOfClass:[UITableView class]])
+            return t;
+    }
+    if ([self.view isKindOfClass:[UITableView class]])
+        return (UITableView *)self.view;
+    for (UIView *sub in self.view.subviews)
+        if ([sub isKindOfClass:[UITableView class]])
+            return (UITableView *)sub;
+    return nil;
+}
+
+- (void)_commitCell:(UITableViewCell *)cell {
+    if (!cell)
+        return;
+    PSSpecifier *spec =
+        [cell respondsToSelector:@selector(specifier)] ? [cell performSelector:@selector(specifier)] : nil;
+    UITextField *tf = PFLocateTextField(cell.contentView ?: cell);
+    if (!spec && !tf)
+        return;
+    if (!spec) {
+        PFPrefsLog(@"_commitCell: no specifier for cell class=%@", NSStringFromClass(cell.class));
+        return;
+    }
+    NSString *text = tf ? (tf.text ?: @"") : @"";
+    PFPrefsLog(@"UA _commitCell specName=%@ cellClass=%@ text='%@'", [spec name], NSStringFromClass(cell.class), text);
+    if ([[spec name] isEqualToString:@"Add"]) {
+        NSString *vLower = text.lowercaseString;
+        if (vLower.length && ![self.domains containsObject:vLower]) {
+            [self.domains addObject:vLower];
+            if (tf)
+                tf.text = @"";
+            [spec setProperty:@"" forKey:@"value"];
+            [self persist];
+            _specifiers = nil;
+            [self reloadSpecifiers];
+        }
+    } else {
+        NSString *old = [spec propertyForKey:@"value"] ?: @"";
+        if (![old isEqualToString:text]) {
+            [self setDomain:text specifier:spec];
+        }
+    }
+}
+
+- (void)_commitAllEdits {
+    UITableView *tv = [self _tableView];
+    if (!tv)
+        return;
+    for (UITableViewCell *cell in tv.visibleCells) {
+        [self _commitCell:cell];
+    }
+    for (PSSpecifier *spec in _specifiers) {
+        if ([spec cellType] == PSEditTextCell) {
+            UITableViewCell *cell = [self cachedCellForSpecifier:spec];
+            if (cell)
+                [self _commitCell:cell];
+        }
+    }
+}
+
+- (void)saveAndClose {
+    [self.view endEditing:YES];
+    [self _commitAllEdits];
+    [self persist];
+}
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        CFPreferencesAppSynchronize(domain);
+        CFArrayRef uaBL = (CFArrayRef)CFPreferencesCopyAppValue(userAgentBlacklistKey, domain);
+        self.domains = [NSMutableArray array];
+        if (uaBL && CFGetTypeID(uaBL) == CFArrayGetTypeID()) {
+            for (id obj in (__bridge NSArray *)uaBL) {
+                if ([obj isKindOfClass:[NSString class]]) {
+                    [self.domains addObject:[(NSString *)obj lowercaseString]];
+                }
+            }
+        }
+        if (uaBL) CFRelease(uaBL);
+
+        NSMutableArray *specs = [NSMutableArray array];
+        PSSpecifier *grp = [PSSpecifier preferenceSpecifierNamed:@"User Agent Blacklist"
+                                                          target:self
+                                                             set:NULL
+                                                             get:NULL
+                                                          detail:Nil
+                                                            cell:PSGroupCell
+                                                            edit:Nil];
+        [grp setProperty:@"Disable user agent spoofing on these domains. Supports domains (example.com) and host/path patterns (example.com/blog). Subdomains match automatically. To delete an entry, clear its text and tap Save."
+                  forKey:@"footerText"];
+        [specs addObject:grp];
+        for (NSString *d in self.domains) {
+            PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
+                                                            target:self
+                                                               set:@selector(setDomain:specifier:)
+                                                               get:@selector(getDomain:)
+                                                            detail:Nil
+                                                              cell:PSEditTextCell
+                                                              edit:Nil];
+            [t setProperty:d forKey:@"value"];
+            [specs addObject:t];
+        }
+        PSSpecifier *add = [PSSpecifier preferenceSpecifierNamed:@"Add"
+                                                          target:self
+                                                             set:@selector(addDomain:specifier:)
+                                                             get:NULL
+                                                          detail:Nil
+                                                            cell:PSEditTextCell
+                                                            edit:Nil];
+        [add setProperty:@"" forKey:@"value"];
+        [specs addObject:add];
+        _specifiers = specs;
+    }
+    return _specifiers;
+}
+
+- (id)getDomain:(PSSpecifier *)spec {
+    return [spec propertyForKey:@"value"];
+}
+
+- (void)setDomain:(id)val specifier:(PSSpecifier *)spec {
+    NSString *old = [spec propertyForKey:@"value"];
+    NSString *v = [[val description] lowercaseString];
+    if (v.length == 0) {
+        [self.domains removeObject:old];
+        [self removeSpecifier:spec animated:YES];
+    } else {
+        NSUInteger idx = [self.domains indexOfObject:old];
+        if (idx != NSNotFound)
+            self.domains[idx] = v;
+        else if (![self.domains containsObject:v])
+            [self.domains addObject:v];
+        [spec setProperty:v forKey:@"value"];
+    }
+    [self persist];
+}
+
+- (void)addDomain:(id)val specifier:(PSSpecifier *)spec {
+    NSString *vLower = [[val description] lowercaseString];
+    if (vLower.length && ![self.domains containsObject:vLower]) {
+        [self.domains addObject:vLower];
+        NSInteger insertIndex = _specifiers.count - 1;
+        PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
+                                                        target:self
+                                                           set:@selector(setDomain:specifier:)
+                                                           get:@selector(getDomain:)
+                                                        detail:Nil
+                                                          cell:PSEditTextCell
+                                                          edit:Nil];
+        [t setProperty:vLower forKey:@"value"];
+        [_specifiers insertObject:t atIndex:insertIndex];
+        [self insertSpecifier:t atIndex:insertIndex animated:YES];
+        [spec setProperty:@"" forKey:@"value"];
+        [self persist];
+    }
+}
+
+- (void)persist {
+    NSArray *snapshot = [self.domains copy];
+    CFPreferencesSetAppValue(userAgentBlacklistKey, (__bridge CFArrayRef)snapshot, domain);
+    CFPreferencesAppSynchronize(domain);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    CFPreferencesAppSynchronize(domain);
+    CFArrayRef uaBL = (CFArrayRef)CFPreferencesCopyAppValue(userAgentBlacklistKey, domain);
+    NSMutableArray *updated = [NSMutableArray array];
+    if (uaBL && CFGetTypeID(uaBL) == CFArrayGetTypeID()) {
+        for (id obj in (__bridge NSArray *)uaBL) {
+            if ([obj isKindOfClass:[NSString class]]) {
+                [updated addObject:[(NSString *)obj lowercaseString]];
+            }
+        }
+    }
+    if (uaBL) CFRelease(uaBL);
+
+    if (![updated isEqualToArray:self.domains]) {
+        self.domains = updated;
+        _specifiers = nil;
+        [self reloadSpecifiers];
     }
 }
 
