@@ -16,6 +16,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
     dispatch_once(&onceToken, ^{
         defaultUABlacklist = [NSMutableSet setWithArray:@[
             @"gemini.google.com",
+            @"youtube.com/tv",
         ]];
         
         defaultGlobalBlacklist = [NSMutableSet setWithArray:@[
