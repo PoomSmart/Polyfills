@@ -157,11 +157,22 @@
             }
         }
 
-        // Fallback to fetch (may be blocked by CSP)
+        // Use shared fetch cache to avoid duplicate requests across polyfills
+        const cache = window.__pfFetchCache;
+        if (cache && !cache.has(href)) {
+            cache.set(href, fetch(href, { mode: 'cors' })
+                .then(r => { if (!r.ok) throw new Error(`Failed to fetch ${href}`); return r.text(); })
+                .catch(e => { console.warn(`❌ Could not fetch stylesheet at ${href}`, e); return null; })
+            );
+        }
         try {
-            const res = await fetch(href, { mode: 'cors' });
-            if (!res.ok) throw new Error(`Failed to fetch ${href}`);
-            const cssText = await res.text();
+            const cssText = cache
+                ? await cache.get(href)
+                : await fetch(href, { mode: 'cors' }).then(r => {
+                    if (!r.ok) throw new Error(`Failed to fetch ${href}`);
+                    return r.text();
+                });
+            if (!cssText) return false;
             const cleaned = cleanCSS(cssText);
             injectStyle(cleaned);
             return true;
@@ -227,9 +238,9 @@
         }
     }
 
-    // Set up MutationObserver to watch for dynamically added styles
-    function setupMutationObserver() {
-        const observer = new MutationObserver((mutations) => {
+    // Register with the shared mutation hub (or fall back to own observer)
+    function setupMutationListener() {
+        function handleMutations(mutations) {
             let needsProcessing = false;
 
             for (const mutation of mutations) {
@@ -247,7 +258,6 @@
                             }
                             // Check for new link elements with stylesheets
                             else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
-                                // Process all link stylesheets since we can access them via cssRules
                                 needsProcessing = true;
                             }
                             // Check for nested style/link elements within added nodes
@@ -267,7 +277,6 @@
                                 }
 
                                 if (linkNodes && linkNodes.length > 0) {
-                                    // Process all link stylesheets since we can access them via cssRules
                                     needsProcessing = true;
                                 }
                             }
@@ -290,22 +299,25 @@
                     processStyleSheets();
                 }, 250);
             }
-        });
+        }
 
-        // Start observing
-        observer.observe(document, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['href', 'rel']
-        });
-
-        return observer;
+        if (window.__pfRegisterMutationListener) {
+            window.__pfRegisterMutationListener(handleMutations);
+        } else {
+            // Fallback: own observer if hub is not available
+            const observer = new MutationObserver(handleMutations);
+            observer.observe(document, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['href', 'rel']
+            });
+        }
     }
 
     // Initial processing
     processStyleSheets();
 
-    // Set up observer for dynamic content
-    setupMutationObserver();
+    // Register listener for dynamic content
+    setupMutationListener();
 })();

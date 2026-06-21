@@ -45,26 +45,13 @@ static BOOL isIOSVersionOrNewer(NSInteger major, NSInteger minor) {
     return NO;
 }
 
-
-static BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
-    if (entry.length == 0 || url == nil) return NO;
-    NSString *host = url.host.lowercaseString ?: @"";
-    NSString *path = url.path ?: @"/";
-    NSString *rule = entry.lowercaseString;
-    NSRange slash = [rule rangeOfString:@"/"];
-    if (slash.location == NSNotFound) {
-        return [host isEqualToString:rule] || [host hasSuffix:[@"." stringByAppendingString:rule]];
-    }
-
-    NSString *ruleHost = [rule substringToIndex:slash.location];
-    NSString *rulePath = [rule substringFromIndex:slash.location];
-    if (!([host isEqualToString:ruleHost] || [host hasSuffix:[@"." stringByAppendingString:ruleHost]])) {
-        return NO;
-    }
-    return [path isEqualToString:rulePath] || [path hasPrefix:[rulePath hasSuffix:@"/"] ? rulePath : [rulePath stringByAppendingString:@"/"]];
-}
-
 static BOOL isUserAgentBlacklistedForURL(NSURL *url) {
+    if (url != nil) {
+        NSString *scheme = [url.scheme lowercaseString];
+        if (scheme && ![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"]) {
+            return YES;
+        }
+    }
     NSArray<NSString *> *blacklist = [PolyfillsBlacklistManager mergedUserAgentBlacklist];
     if (url == nil || blacklist.count == 0) return NO;
     for (NSString *entry in blacklist) {
@@ -76,14 +63,29 @@ static BOOL isUserAgentBlacklistedForURL(NSURL *url) {
 }
 
 static NSURL *currentUserAgentURL(WKWebView *webView, NSURL *fallbackURL) {
-    NSURL *resolved = fallbackURL;
-    if (resolved == nil && webView != nil) {
-        resolved = webView.URL;
+    if (fallbackURL != nil) {
+        NSString *scheme = [fallbackURL.scheme lowercaseString];
+        if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) {
+            return fallbackURL;
+        }
     }
-    if (resolved == nil && webView != nil) {
-        resolved = objc_getAssociatedObject(webView, PendingUserAgentURLKey);
+    if (webView != nil) {
+        NSURL *webURL = webView.URL;
+        if (webURL != nil) {
+            NSString *scheme = [webURL.scheme lowercaseString];
+            if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) {
+                return webURL;
+            }
+        }
+        NSURL *pending = objc_getAssociatedObject(webView, PendingUserAgentURLKey);
+        if (pending != nil) {
+            NSString *scheme = [pending.scheme lowercaseString];
+            if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) {
+                return pending;
+            }
+        }
     }
-    return resolved;
+    return fallbackURL ?: (webView ? webView.URL : nil);
 }
 
 static void rememberPendingUserAgentURL(WKWebView *webView, NSURL *url) {
@@ -299,6 +301,12 @@ static NSString *getFinalUA(NSString *defaultUA) {
 }
 
 static void setUserAgent(WKWebView *webView, NSString *userAgent) {
+    if ([webView respondsToSelector:@selector(customUserAgent)]) {
+        NSString *current = webView.customUserAgent;
+        if (current == userAgent || [current isEqualToString:userAgent]) {
+            return;
+        }
+    }
     if ([webView respondsToSelector:@selector(setCustomUserAgent:)])
         webView.customUserAgent = userAgent;
     else {
@@ -312,10 +320,19 @@ static void setUserAgent(WKWebView *webView, NSString *userAgent) {
 }
 
 static void applyUserAgentOverrideForURL(WKWebView *webView, NSURL *url) {
-    if (isIOSVersionOrNewer(16, 3) || !userAgentEnabled) return;
+    if (!userAgentEnabled) return;
     NSURL *resolvedURL = currentUserAgentURL(webView, url);
-    HBLogDebug(@"Applying user agent override for URL: %@", resolvedURL);
+    HBLogDebug(@"[%p] Applying user agent override for URL: %@", webView, resolvedURL);
     if (resolvedURL == nil) {
+        return;
+    }
+    NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+    if (customUA != nil) {
+        setUserAgent(webView, customUA);
+        return;
+    }
+    if (isIOSVersionOrNewer(16, 3)) {
+        setUserAgent(webView, nil);
         return;
     }
     if (isUserAgentBlacklistedForURL(resolvedURL)) {
@@ -333,7 +350,16 @@ static void applyUserAgentOverrideForURL(WKWebView *webView, NSURL *url) {
 }
 
 static void applyDefaultUserAgentOverride(WKWebView *webView) {
-    if (isIOSVersionOrNewer(16, 3) || !userAgentEnabled) return;
+    if (!userAgentEnabled) return;
+    NSURL *resolvedURL = currentUserAgentURL(webView, nil);
+    if (resolvedURL) {
+        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+        if (customUA != nil) {
+            setUserAgent(webView, customUA);
+            return;
+        }
+    }
+    if (isIOSVersionOrNewer(16, 3)) return;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability-new"
     WKContentMode contentMode = WKContentModeRecommended;
@@ -341,7 +367,7 @@ static void applyDefaultUserAgentOverride(WKWebView *webView) {
         contentMode = webView.configuration.defaultWebpagePreferences.preferredContentMode;
     NSString *ua = IS_IPAD || contentMode == WKContentModeDesktop ? desktopUserAgent : mobileUserAgent;
 #pragma clang diagnostic pop
-    HBLogDebug(@"Applying default user agent override before URL is known");
+    HBLogDebug(@"[%p] Applying default user agent override before URL is known", webView);
     setUserAgent(webView, ua);
 }
 
@@ -483,6 +509,51 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
     });
 }
 
+// Dedicated KVO observer for WKWebView URL changes.
+// Using a separate object avoids conflicts with WKWebView subclass
+// overrides of -observeValueForKeyPath:ofObject:change:context:.
+@interface PolyfillsKVOObserver : NSObject
+@property (nonatomic, weak) WKWebView *webView;
+- (instancetype)initWithWebView:(WKWebView *)webView;
+@end
+
+@implementation PolyfillsKVOObserver
+
+- (instancetype)initWithWebView:(WKWebView *)webView {
+    self = [super init];
+    if (self) {
+        _webView = webView;
+        [webView addObserver:self forKeyPath:@"URL" options:NSKeyValueObservingOptionNew context:NULL];
+    }
+    return self;
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if ([keyPath isEqualToString:@"URL"]) {
+        WKWebView *wv = self.webView;
+        if (!wv) return;
+        id newURLVal = change[NSKeyValueChangeNewKey];
+        NSURL *newURL = [newURLVal isKindOfClass:[NSURL class]] ? (NSURL *)newURLVal : nil;
+        HBLogDebug(@"[%p] KVO URL changed to: %@", wv, newURL);
+        applyUserAgentOverrideForURL(wv, newURL);
+        return;
+    }
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+}
+
+- (void)dealloc {
+    WKWebView *wv = self.webView;
+    if (wv) {
+        @try {
+            [wv removeObserver:self forKeyPath:@"URL"];
+        } @catch (NSException *e) {}
+    }
+}
+
+@end
+
+static const void *KVOObserverKey = &KVOObserverKey;
+
 %hook WKWebView
 
 static const void *InjectedKey = &InjectedKey;
@@ -495,13 +566,39 @@ static const void *InjectedKey = &InjectedKey;
     }
     if (!objc_getAssociatedObject(controller, InjectedKey)) {
         objc_setAssociatedObject(controller, InjectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-        // Always use immediate injection for best performance
         loadAndInjectScriptsImmediately(controller);
     }
     WKWebView *webView = %orig;
+    if (webView && !objc_getAssociatedObject(webView, KVOObserverKey)) {
+        PolyfillsKVOObserver *observer = [[PolyfillsKVOObserver alloc] initWithWebView:webView];
+        objc_setAssociatedObject(webView, KVOObserverKey, observer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     overrideUserAgent(webView);
     return webView;
+}
+
+- (instancetype)initWithCoder:(NSCoder *)coder {
+    WKWebView *webView = %orig;
+    if (webView) {
+        WKUserContentController *controller = webView.configuration.userContentController;
+        if (controller && !objc_getAssociatedObject(controller, InjectedKey)) {
+            objc_setAssociatedObject(controller, InjectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            loadAndInjectScriptsImmediately(controller);
+        }
+        if (!objc_getAssociatedObject(webView, KVOObserverKey)) {
+            PolyfillsKVOObserver *observer = [[PolyfillsKVOObserver alloc] initWithWebView:webView];
+            objc_setAssociatedObject(webView, KVOObserverKey, observer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        overrideUserAgent(webView);
+    }
+    return webView;
+}
+
+- (void)dealloc {
+    // Removing the associated object triggers PolyfillsKVOObserver's dealloc
+    // which safely removes itself as a KVO observer.
+    objc_setAssociatedObject(self, KVOObserverKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    %orig;
 }
 
 - (WKNavigation *)loadRequest:(NSURLRequest *)request {
@@ -511,21 +608,35 @@ static const void *InjectedKey = &InjectedKey;
 }
 
 - (void)setCustomUserAgent:(NSString *)customUserAgent {
-    HBLogDebug(@"Polyfills Setting custom user agent: %@", customUserAgent);
+    HBLogDebug(@"[%p] Polyfills Setting custom user agent: %@", self, customUserAgent);
     NSURL *resolvedURL = currentUserAgentURL(self, nil);
-    if (userAgentEnabled && resolvedURL != nil && !isUserAgentBlacklistedForURL(resolvedURL)) {
-        %orig(getFinalUA(customUserAgent));
-        return;
+    if (userAgentEnabled && resolvedURL != nil) {
+        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+        if (customUA != nil) {
+            %orig(customUA);
+            return;
+        }
+        if (!isUserAgentBlacklistedForURL(resolvedURL) && !isIOSVersionOrNewer(16, 3)) {
+            %orig(getFinalUA(customUserAgent));
+            return;
+        }
     }
     %orig(customUserAgent);
 }
 
 - (void)setApplicationNameForUserAgent:(NSString *)applicationNameForUserAgent {
-    HBLogDebug(@"Polyfills Setting application name for user agent: %@", applicationNameForUserAgent);
+    HBLogDebug(@"[%p] Polyfills Setting application name for user agent: %@", self, applicationNameForUserAgent);
     NSURL *resolvedURL = currentUserAgentURL(self, nil);
-    if (userAgentEnabled && resolvedURL != nil && !isUserAgentBlacklistedForURL(resolvedURL)) {
-        %orig(getFinalUA(applicationNameForUserAgent));
-        return;
+    if (userAgentEnabled && resolvedURL != nil) {
+        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+        if (customUA != nil) {
+            %orig(applicationNameForUserAgent);
+            return;
+        }
+        if (!isUserAgentBlacklistedForURL(resolvedURL) && !isIOSVersionOrNewer(16, 3)) {
+            %orig(getFinalUA(applicationNameForUserAgent));
+            return;
+        }
     }
     %orig(applicationNameForUserAgent);
 }
@@ -538,7 +649,10 @@ static const void *InjectedKey = &InjectedKey;
 
 - (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
     if ([value hasPrefix:@"Mozilla"] && [field caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) {
-        if (!isUserAgentBlacklistedForURL(self.URL)) {
+        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:self.URL];
+        if (customUA != nil) {
+            value = customUA;
+        } else if (!isUserAgentBlacklistedForURL(self.URL) && !isIOSVersionOrNewer(16, 3)) {
             value = IS_IPAD ? desktopUserAgent : mobileUserAgent;
         }
     }
@@ -590,7 +704,7 @@ static const void *InjectedKey = &InjectedKey;
 
     %init;
 
-    if (!isIOSVersionOrNewer(16, 3) && CFPreferencesGetAppBooleanValue(userAgentKey, domain, NULL)) {
+    if (CFPreferencesGetAppBooleanValue(userAgentKey, domain, NULL)) {
         userAgentEnabled = YES;
         %init(UserAgent);
     }

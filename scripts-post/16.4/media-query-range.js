@@ -555,13 +555,20 @@
             try {
                 const url = new URL(sheet.href, location.href);
                 if (url.origin === location.origin) {
-                    const res = await fetch(url.href, { mode: "cors" });
-                    if (res.ok) {
-                        const css = await res.text();
-                        if (/@media\s+[^\{]*[<>]=?/.test(css)) {
-                            const transformed = transformCSS(css);
-                            if (transformed !== css) injectStyle(transformed);
-                        }
+                    // Use shared fetch cache to avoid duplicate requests across polyfills
+                    const cache = window.__pfFetchCache;
+                    if (cache && !cache.has(url.href)) {
+                        cache.set(url.href, fetch(url.href, { mode: 'cors' })
+                            .then(r => r.ok ? r.text() : Promise.reject())
+                            .catch(() => null)
+                        );
+                    }
+                    const css = cache
+                        ? await cache.get(url.href)
+                        : await fetch(url.href, { mode: 'cors' }).then(r => r.ok ? r.text() : Promise.reject());
+                    if (css && /@media\s+[^\{]*[<>]=?/.test(css)) {
+                        const transformed = transformCSS(css);
+                        if (transformed !== css) injectStyle(transformed);
                     }
                 }
             } catch (e) {
@@ -606,17 +613,17 @@
     }
 
     function setupObserver() {
-        const obs = new MutationObserver((muts) => {
+        function handleMutations(muts) {
             let needs = false;
             for (const m of muts) {
-                if (m.type === "childList") {
+                if (m.type === 'childList') {
                     for (const node of m.addedNodes) {
                         if (node.nodeType !== 1) continue;
-                        if (node.tagName === "STYLE") {
+                        if (node.tagName === 'STYLE') {
                             processInlineStyleTag(node);
                         } else if (
-                            node.tagName === "LINK" &&
-                            node.rel === "stylesheet"
+                            node.tagName === 'LINK' &&
+                            node.rel === 'stylesheet'
                         ) {
                             needs = true;
                         } else {
@@ -628,13 +635,13 @@
                             if (inner && inner.length) needs = true;
                         }
                     }
-                } else if (m.type === "attributes") {
+                } else if (m.type === 'attributes') {
                     const t = m.target;
                     if (
-                        t.tagName === "LINK" &&
-                        t.rel === "stylesheet" &&
-                        (m.attributeName === "href" ||
-                            m.attributeName === "rel")
+                        t.tagName === 'LINK' &&
+                        t.rel === 'stylesheet' &&
+                        (m.attributeName === 'href' ||
+                            m.attributeName === 'rel')
                     ) {
                         needs = true;
                     }
@@ -643,14 +650,20 @@
             if (needs) {
                 queueRescan();
             }
-        });
-        obs.observe(document, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ["href", "rel"],
-        });
-        return obs;
+        }
+
+        if (window.__pfRegisterMutationListener) {
+            window.__pfRegisterMutationListener(handleMutations);
+        } else {
+            // Fallback: own observer if hub is not available
+            const obs = new MutationObserver(handleMutations);
+            obs.observe(document, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['href', 'rel'],
+            });
+        }
     }
 
     processAll();

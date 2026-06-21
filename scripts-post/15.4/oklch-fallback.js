@@ -1073,10 +1073,19 @@
     }
 
     async function fetchAndInlineStylesheet(href) {
+        // Use shared fetch cache to avoid duplicate requests across polyfills
+        const cache = window.__pfFetchCache;
+        if (cache && !cache.has(href)) {
+            cache.set(href, fetch(href, { mode: "cors" })
+                .then(r => r.ok ? r.text() : Promise.reject())
+                .catch(e => { dbg("Failed to fetch stylesheet", href, e); stats.errors++; return null; })
+            );
+        }
         try {
-            const res = await fetch(href, { mode: "cors" });
-            if (!res.ok) return false;
-            const text = await res.text();
+            const text = cache
+                ? await cache.get(href)
+                : await fetch(href, { mode: "cors" }).then(r => r.ok ? r.text() : Promise.reject());
+            if (!text) return false;
             if (!/oklch\(/i.test(text)) return false;
             const out = replaceOKLCHInText(text);
             if (out !== text) {
@@ -1213,9 +1222,30 @@
         }, wait);
     }
 
-    // Observe dynamic additions/changes
-    function setupMutationObserver() {
-        const observer = new MutationObserver((mutations) => {
+    // Intercept Element.prototype.setAttribute to catch inline style writes with oklch() values.
+    // This replaces the expensive 'style' attribute MutationObserver (which fired on every
+    // inline style mutation across the whole document subtree) with a targeted synchronous hook.
+    function setupInlineStyleInterception() {
+        const origSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function (name, value) {
+            if (name === 'style' && typeof value === 'string' && /oklch\(/i.test(value)) {
+                try {
+                    const replaced = replaceOKLCHInText(value);
+                    if (replaced !== value) {
+                        origSetAttribute.call(this, name, replaced);
+                        stats.inlineStyleAttrsProcessed++;
+                        return;
+                    }
+                } catch (_) {}
+            }
+            origSetAttribute.call(this, name, value);
+        };
+    }
+
+    // Observe dynamic additions/changes via the shared mutation hub.
+    // The 'style' attribute path is now handled by setupInlineStyleInterception() instead.
+    function setupMutationListener() {
+        function handleMutations(mutations) {
             stats.observerEvents += mutations.length;
             let needs = false;
             for (const m of mutations) {
@@ -1237,6 +1267,8 @@
                                 styleNodes.forEach(processStyleTagNode);
                             }
 
+                            // Scan for elements already carrying inline oklch() styles
+                            // in the newly added subtree (e.g. via innerHTML / template cloning).
                             const inlineStyledNodes =
                                 node.querySelectorAll &&
                                 node.querySelectorAll('[style*="oklch("]');
@@ -1261,44 +1293,40 @@
                     }
                 } else if (m.type === "attributes") {
                     const t = m.target;
+                    // Only href/rel changes on link elements reach here (hub no longer
+                    // forwards 'style' attribute mutations — those are handled by the
+                    // setAttribute monkeypatch above).
                     if (
-                        (t.tagName === "LINK" &&
-                            t.rel === "stylesheet" &&
-                            (m.attributeName === "href" ||
-                                m.attributeName === "rel")) ||
-                        (m.attributeName === "style" &&
-                            /oklch\(/i.test(t.getAttribute("style") || ""))
+                        t.tagName === "LINK" &&
+                        t.rel === "stylesheet" &&
+                        (m.attributeName === "href" || m.attributeName === "rel")
                     ) {
-                        if (m.attributeName === "style") {
-                            try {
-                                const styleText = t.getAttribute("style") || "";
-                                const out = replaceOKLCHInText(styleText);
-                                if (out !== styleText) {
-                                    t.setAttribute("style", out);
-                                    stats.inlineStyleAttrsProcessed++;
-                                }
-                            } catch (_) {}
-                        } else {
-                            needs = true;
-                        }
+                        needs = true;
                     }
                 }
             }
             if (needs) {
                 queueFullProcess();
             }
-        });
+        }
 
-        observer.observe(document, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ["href", "rel", "style"],
-        });
-        return observer;
+        if (window.__pfRegisterMutationListener) {
+            window.__pfRegisterMutationListener(handleMutations);
+        } else {
+            // Fallback: own observer if hub is not available
+            const observer = new MutationObserver(handleMutations);
+            observer.observe(document, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                // No 'style' here — that is handled by the setAttribute monkeypatch
+                attributeFilter: ["href", "rel"],
+            });
+        }
     }
 
     dbg("OKLCH fallback enabled");
+    setupInlineStyleInterception();
     processAllStyleSheets({ forceInlineScan: true, forceElementFallbacks: true });
-    setupMutationObserver();
+    setupMutationListener();
 })();

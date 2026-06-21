@@ -49,6 +49,17 @@ static UITextField *PFLocateTextField(UIView *root) {
 @property(nonatomic, strong) NSMutableDictionary *allBlacklists; // script -> domains array
 @end
 
+@interface PolyfillsCustomUserAgentsController : PSListController
+@property(nonatomic, strong) NSMutableDictionary *customUAs;
+@end
+
+@interface PolyfillsCustomUserAgentEditController : PSListController <UITextFieldDelegate>
+@property(nonatomic, strong) NSString *originalRule;
+@property(nonatomic, strong) NSString *currentRule;
+@property(nonatomic, strong) NSString *currentUserAgent;
+@property(nonatomic, weak) PolyfillsCustomUserAgentsController *parent;
+@end
+
 @implementation PolyfillsRootListController {
     NSMutableSet *_disabledScripts;   // lowercase
     NSMutableDictionary *_blacklists; // script -> domains
@@ -70,6 +81,12 @@ static UITextField *PFLocateTextField(UIView *root) {
         CFRelease(bl);
     PFPrefsLog(@"Root loadPrefs: disabled=%lu, blacklistKeys=%@", (unsigned long)_disabledScripts.count,
                _blacklists.allKeys);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    _specifiers = nil;
+    [self reloadSpecifiers];
 }
 
 - (NSArray *)specifiers {
@@ -134,11 +151,30 @@ static UITextField *PFLocateTextField(UIView *root) {
                                                                                         set:NULL
                                                                                         get:NULL
                                                                                     detail:[PolyfillsUserAgentBlacklistController class]
-                                                                                      cell:PSLinkCell
-                                                                                      edit:Nil];
+                                                                                       cell:PSLinkCell
+                                                                                       edit:Nil];
           [uaBlLink setProperty:@YES forKey:@"enabled"];
           [uaBlLink setProperty:@YES forKey:@"isController"];
           [specs addObject:uaBlLink];
+
+          CFDictionaryRef uaCustom = (CFDictionaryRef)CFPreferencesCopyAppValue(customUserAgentsKey, domain);
+          NSUInteger uaCustomCount = 0;
+          if (uaCustom && CFGetTypeID(uaCustom) == CFDictionaryGetTypeID()) {
+                uaCustomCount = CFDictionaryGetCount(uaCustom);
+          }
+          if (uaCustom) CFRelease(uaCustom);
+
+          NSString *uaCustomLabel = [NSString stringWithFormat:@"Custom User Agents (%lu)", (unsigned long)uaCustomCount];
+          PSSpecifier *uaCustomLink = [PSSpecifier preferenceSpecifierNamed:uaCustomLabel
+                                                                     target:self
+                                                                        set:NULL
+                                                                        get:NULL
+                                                                     detail:[PolyfillsCustomUserAgentsController class]
+                                                                       cell:PSLinkCell
+                                                                       edit:Nil];
+          [uaCustomLink setProperty:@YES forKey:@"enabled"];
+          [uaCustomLink setProperty:@YES forKey:@"isController"];
+          [specs addObject:uaCustomLink];
 
         NSOperatingSystemVersion osv = [[NSProcessInfo processInfo] operatingSystemVersion];
         // iOS version gate: show only on iOS 11.0 - 16.3 inclusive
@@ -1023,6 +1059,240 @@ static UITextField *PFLocateTextField(UIView *root) {
         [self reloadSpecifiers];
         PFPrefsLog(@"Rebuilt specifiers for script=%@ newDomains=%@", self.scriptName, self.domains);
     }
+}
+
+@end
+
+@implementation PolyfillsCustomUserAgentsController
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    _specifiers = nil;
+    [self reloadSpecifiers];
+}
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        CFPreferencesAppSynchronize(domain);
+        CFDictionaryRef dict = (CFDictionaryRef)CFPreferencesCopyAppValue(customUserAgentsKey, domain);
+        self.customUAs = [NSMutableDictionary dictionary];
+        if (dict && CFGetTypeID(dict) == CFDictionaryGetTypeID()) {
+            [self.customUAs addEntriesFromDictionary:(__bridge NSDictionary *)dict];
+        }
+        if (dict) CFRelease(dict);
+
+        NSMutableArray *specs = [NSMutableArray array];
+        PSSpecifier *grp = [PSSpecifier preferenceSpecifierNamed:@"Per-Website Custom User Agents"
+                                                          target:self
+                                                             set:NULL
+                                                             get:NULL
+                                                          detail:Nil
+                                                            cell:PSGroupCell
+                                                            edit:Nil];
+        [grp setProperty:@"Configure a custom User Agent for specific website domains/paths. Tapping an entry allows editing. To add a new one, tap 'Add New Custom User Agent'."
+                  forKey:@"footerText"];
+        [specs addObject:grp];
+
+        NSArray *sortedRules = [self.customUAs.allKeys sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+        for (NSString *rule in sortedRules) {
+            NSString *ua = self.customUAs[rule];
+            PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:rule
+                                                              target:self
+                                                                 set:NULL
+                                                                 get:NULL
+                                                              detail:[PolyfillsCustomUserAgentEditController class]
+                                                                cell:PSLinkCell
+                                                                edit:Nil];
+            [spec setProperty:rule forKey:@"rule"];
+            [spec setProperty:ua forKey:@"userAgent"];
+            [spec setProperty:self forKey:@"parentController"];
+            [specs addObject:spec];
+        }
+
+        PSSpecifier *addGrp = [PSSpecifier preferenceSpecifierNamed:@""
+                                                             target:self
+                                                                set:NULL
+                                                                get:NULL
+                                                             detail:Nil
+                                                               cell:PSGroupCell
+                                                               edit:Nil];
+        [specs addObject:addGrp];
+
+        PSSpecifier *add = [PSSpecifier preferenceSpecifierNamed:@"Add New Custom User Agent"
+                                                          target:self
+                                                             set:NULL
+                                                             get:NULL
+                                                          detail:[PolyfillsCustomUserAgentEditController class]
+                                                            cell:PSLinkCell
+                                                            edit:Nil];
+        [add setProperty:@"" forKey:@"rule"];
+        [add setProperty:@"" forKey:@"userAgent"];
+        [add setProperty:self forKey:@"parentController"];
+        [specs addObject:add];
+
+        _specifiers = specs;
+    }
+    return _specifiers;
+}
+
+@end
+
+@implementation PolyfillsCustomUserAgentEditController
+
+- (void)setSpecifier:(PSSpecifier *)specifier {
+    [super setSpecifier:specifier];
+    self.originalRule = [specifier propertyForKey:@"rule"] ?: @"";
+    self.currentRule = self.originalRule;
+    self.currentUserAgent = [specifier propertyForKey:@"userAgent"] ?: @"";
+    self.parent = [specifier propertyForKey:@"parentController"];
+}
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        NSMutableArray *specs = [NSMutableArray array];
+        
+        PSSpecifier *grp1 = [PSSpecifier preferenceSpecifierNamed:@"Website / Rule"
+                                                           target:self
+                                                              set:NULL
+                                                              get:NULL
+                                                           detail:Nil
+                                                             cell:PSGroupCell
+                                                             edit:Nil];
+        [specs addObject:grp1];
+        
+        PSSpecifier *ruleSpec = [PSSpecifier preferenceSpecifierNamed:@"Website"
+                                                               target:self
+                                                                  set:@selector(setRuleValue:specifier:)
+                                                                  get:@selector(getRuleValue:)
+                                                               detail:Nil
+                                                                 cell:PSEditTextCell
+                                                                 edit:Nil];
+        [ruleSpec setProperty:@"Website" forKey:@"placeholder"];
+        [specs addObject:ruleSpec];
+
+        PSSpecifier *grp2 = [PSSpecifier preferenceSpecifierNamed:@"Custom User Agent"
+                                                           target:self
+                                                              set:NULL
+                                                              get:NULL
+                                                           detail:Nil
+                                                             cell:PSGroupCell
+                                                             edit:Nil];
+        [specs addObject:grp2];
+
+        PSSpecifier *uaSpec = [PSSpecifier preferenceSpecifierNamed:@"User Agent"
+                                                             target:self
+                                                                set:@selector(setUAValue:specifier:)
+                                                                get:@selector(getUAValue:)
+                                                             detail:Nil
+                                                               cell:PSEditTextCell
+                                                               edit:Nil];
+        [uaSpec setProperty:@"User Agent String" forKey:@"placeholder"];
+        [specs addObject:uaSpec];
+
+        PSSpecifier *btnGrp = [PSSpecifier preferenceSpecifierNamed:@""
+                                                             target:self
+                                                                set:NULL
+                                                                get:NULL
+                                                             detail:Nil
+                                                               cell:PSGroupCell
+                                                               edit:Nil];
+        [specs addObject:btnGrp];
+
+        PSSpecifier *saveBtn = [PSSpecifier preferenceSpecifierNamed:@"Save"
+                                                              target:self
+                                                                 set:NULL
+                                                                 get:NULL
+                                                              detail:Nil
+                                                                cell:PSButtonCell
+                                                                edit:Nil];
+        saveBtn->action = @selector(savePressed);
+        [specs addObject:saveBtn];
+
+        if (self.originalRule.length > 0) {
+            PSSpecifier *deleteBtn = [PSSpecifier preferenceSpecifierNamed:@"Delete"
+                                                                    target:self
+                                                                       set:NULL
+                                                                       get:NULL
+                                                                    detail:Nil
+                                                                      cell:PSButtonCell
+                                                                      edit:Nil];
+            deleteBtn->action = @selector(deletePressed);
+            [specs addObject:deleteBtn];
+        }
+
+        _specifiers = specs;
+    }
+    return _specifiers;
+}
+
+- (id)getRuleValue:(PSSpecifier *)specifier {
+    return self.currentRule;
+}
+
+- (void)setRuleValue:(id)value specifier:(PSSpecifier *)specifier {
+    self.currentRule = [[value description] lowercaseString];
+}
+
+- (id)getUAValue:(PSSpecifier *)specifier {
+    return self.currentUserAgent;
+}
+
+- (void)setUAValue:(id)value specifier:(PSSpecifier *)specifier {
+    self.currentUserAgent = [value description];
+}
+
+- (void)savePressed {
+    [self.view endEditing:YES];
+    for (PSSpecifier *spec in _specifiers) {
+        if ([spec cellType] == PSEditTextCell) {
+            UITableViewCell *cell = [self cachedCellForSpecifier:spec];
+            if (cell) {
+                UITextField *tf = PFLocateTextField(cell.contentView ?: cell);
+                if (tf) {
+                    if (spec->action == @selector(setRuleValue:specifier:) || [spec.name isEqualToString:@"Website"]) {
+                        self.currentRule = tf.text.lowercaseString ?: @"";
+                    } else {
+                        self.currentUserAgent = tf.text ?: @"";
+                    }
+                }
+            }
+        }
+    }
+
+    NSString *rule = [self.currentRule stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *ua = [self.currentUserAgent stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+    if (rule.length == 0 || ua.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Error"
+                                                                       message:@"Website and User Agent fields cannot be empty."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    NSMutableDictionary *dict = [self.parent.customUAs mutableCopy] ?: [NSMutableDictionary dictionary];
+    if (self.originalRule.length > 0 && ![self.originalRule isEqualToString:rule]) {
+        [dict removeObjectForKey:self.originalRule];
+    }
+    dict[rule] = ua;
+    
+    CFPreferencesSetAppValue(customUserAgentsKey, (__bridge CFDictionaryRef)dict, domain);
+    CFPreferencesAppSynchronize(domain);
+    
+    [self.navigationController popViewControllerAnimated:YES];
+}
+
+- (void)deletePressed {
+    if (self.originalRule.length > 0) {
+        NSMutableDictionary *dict = [self.parent.customUAs mutableCopy] ?: [NSMutableDictionary dictionary];
+        [dict removeObjectForKey:self.originalRule];
+        
+        CFPreferencesSetAppValue(customUserAgentsKey, (__bridge CFDictionaryRef)dict, domain);
+        CFPreferencesAppSynchronize(domain);
+    }
+    
+    [self.navigationController popViewControllerAnimated:YES];
 }
 
 @end
