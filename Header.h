@@ -45,7 +45,11 @@ static inline BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
 + (NSArray<NSString *> *)mergedGlobalBlacklist;
 + (NSDictionary<NSString *, NSArray<NSString *> *> *)mergedScriptBlacklists;
 
++ (void)invalidateCaches;
+
 @end
+
+void PFInvalidatePreferenceCaches(void);
 
 @interface PolyfillsUserAgentManager : NSObject
 
@@ -57,6 +61,8 @@ static inline BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
 
 // Retrieve matched custom user agent for URL, or nil if none matches
 + (NSString *)customUserAgentForURL:(NSURL *)url;
+
++ (void)invalidateCaches;
 
 @end
 

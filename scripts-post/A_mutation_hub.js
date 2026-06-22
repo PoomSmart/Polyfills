@@ -30,8 +30,7 @@
         subtree: true,
         attributes: true,
         // Union of all polyfill attribute interests.
-        // oklch-fallback no longer needs "style" here — it uses setAttribute monkeypatching instead.
-        attributeFilter: ['href', 'rel'],
+        attributeFilter: ['href', 'rel', 'class'],
     });
 
     window.__pfMutationHub = {

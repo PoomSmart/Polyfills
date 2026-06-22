@@ -1,1 +1,1 @@
-"use strict";Promise.allSettled=Promise.allSettled||function(promises){return Promise.all(promises.map(function(p){return p.then(function(value){return{status:"fulfilled",value:value}}).catch(function(reason){return{status:"rejected",reason:reason}})}))};
+Promise.allSettled=Promise.allSettled||function(t){return Promise.all(t.map(function(t){return t.then(function(t){return{status:"fulfilled",value:t}}).catch(function(t){return{status:"rejected",reason:t}})}))};

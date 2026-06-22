@@ -11,8 +11,10 @@
 // Properties covered: mask, mask-image, mask-size, mask-repeat, mask-position,
 //                     mask-origin, mask-clip, mask-composite, mask-mode
 (function polyfillWebkitMaskImage() {
+    var __PF_DEBUG__ = false;
     const LOG = '[webkit-mask]';
     function dbg() {
+        if (!__PF_DEBUG__) return;
         try { console.log.apply(console, [LOG].concat(Array.prototype.slice.call(arguments))); } catch (_) {}
     }
 
@@ -22,21 +24,6 @@
     }
     window.__webkitMaskPolyfillApplied = true;
     dbg('polyfill starting');
-
-    // Feature detection: if unprefixed mask-image is supported natively, bail out.
-    const _test = document.createElement('div');
-    _test.style.setProperty('mask-image', 'none');
-    const nativeVal = _test.style.getPropertyValue('mask-image');
-    dbg('feature detection: mask-image native value =', JSON.stringify(nativeVal));
-    if (nativeVal !== '') {
-        dbg('native mask-image supported — polyfill not needed');
-        return;
-    }
-    dbg('native mask-image NOT supported — polyfill active');
-
-    // Also check -webkit-mask-image support for diagnostics
-    _test.style.setProperty('-webkit-mask-image', 'none');
-    dbg('-webkit-mask-image supported:', JSON.stringify(_test.style.getPropertyValue('-webkit-mask-image')));
 
     const MASK_PROPS = [
         'mask',
@@ -50,10 +37,37 @@
         'mask-mode',
     ];
 
+    const createPatcher = window.__pfCreateWebkitPropertyPatcher;
+    const maskPatcher = createPatcher
+        ? createPatcher({
+              properties: MASK_PROPS,
+              detectProperty: "mask-image",
+              detectValue: "none",
+              quickTest:
+                  /(?:^|[;{])\s*(?:-webkit-)?mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?\s*:/m,
+          })
+        : null;
+
+    // Feature detection: if unprefixed mask-image is supported natively, bail out.
+    const _test = document.createElement('div');
+    _test.style.setProperty('mask-image', 'none');
+    const nativeVal = _test.style.getPropertyValue('mask-image');
+    dbg('feature detection: mask-image native value =', JSON.stringify(nativeVal));
+    if (maskPatcher ? !maskPatcher.needsPolyfill() : nativeVal !== '') {
+        dbg('native mask-image supported — polyfill not needed');
+        return;
+    }
+    dbg('native mask-image NOT supported — polyfill active');
+
+    // Also check -webkit-mask-image support for diagnostics
+    _test.style.setProperty('-webkit-mask-image', 'none');
+    dbg('-webkit-mask-image supported:', JSON.stringify(_test.style.getPropertyValue('-webkit-mask-image')));
+
     // ---- Text-level CSS patching ----
     // Since the browser discards unrecognized properties at parse time, we must duplicate
     // any unprefixed mask property to its -webkit- prefixed equivalent in the raw CSS text.
     function addWebkitPrefixToText(css) {
+        if (maskPatcher) return maskPatcher.patchText(css);
         if (!css || !/\bmask/.test(css)) return css;
         return css.replace(
             /(?:^|;|\{)\s*(mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?)\s*:\s*([^;}]*)/g,
@@ -133,14 +147,28 @@
     // ---- CSSStyleDeclaration prototype patching ----
     // Intercept inline styles set via CSSOM (e.g. element.style.maskImage = ... or setProperty)
     (function patchCSSStyleDeclaration() {
-        const origSetProperty = CSSStyleDeclaration.prototype.setProperty;
-        CSSStyleDeclaration.prototype.setProperty = function (prop, val, priority) {
-            if (prop.startsWith('mask')) {
-                const wprop = '-webkit-' + prop;
-                origSetProperty.call(this, wprop, val, priority);
-            }
-            return origSetProperty.call(this, prop, val, priority);
-        };
+        if (window.__pfHookPrototype) {
+            window.__pfHookPrototype(
+                CSSStyleDeclaration.prototype,
+                "setProperty",
+                function (orig, prop, val, priority) {
+                    if (prop.startsWith("mask")) {
+                        const wprop = "-webkit-" + prop;
+                        orig.call(this, wprop, val, priority);
+                    }
+                    return orig.call(this, prop, val, priority);
+                }
+            );
+        } else {
+            const origSetProperty = CSSStyleDeclaration.prototype.setProperty;
+            CSSStyleDeclaration.prototype.setProperty = function (prop, val, priority) {
+                if (prop.startsWith('mask')) {
+                    const wprop = '-webkit-' + prop;
+                    origSetProperty.call(this, wprop, val, priority);
+                }
+                return origSetProperty.call(this, prop, val, priority);
+            };
+        }
 
         // Define getters/setters for all camelCase properties on style declarations
         for (const prop of MASK_PROPS) {
@@ -162,14 +190,26 @@
     const processedStyleNodes = new WeakMap();
     const processedLinks = new WeakMap();
 
+    function isPolyfillInjectedStyle(node) {
+        return !!(
+            node &&
+            (node.getAttribute("data-css-layers-polyfill") != null ||
+                node.getAttribute("data-color-mix-polyfill") != null ||
+                (node.id && node.id.indexOf("css-layers-src-") === 0) ||
+                (node.id && node.id.indexOf("oklch-") === 0) ||
+                (node.id && node.id.indexOf("patched-") === 0) ||
+                (node.id && node.id.indexOf("color-mix-") === 0))
+        );
+    }
+
     function processStyleNode(node) {
-        if (!node || node.tagName !== 'STYLE') return;
+        if (!node || node.tagName !== 'STYLE' || isPolyfillInjectedStyle(node)) return;
         const nodeLabel = node.id ? '#' + node.id : (node.className || '<style>');
         const txt = node.textContent;
         if (processedStyleNodes.get(node) === txt) return;
         processedStyleNodes.set(node, txt);
 
-        if (txt && /\bmask/.test(txt)) {
+        if (txt && /(?:^|[;{])\s*(?:-webkit-)?mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?\s*:/m.test(txt)) {
             const patched = addWebkitPrefixToText(txt);
             if (patched !== txt) {
                 dbg('  textContent patched for style node:', nodeLabel);
@@ -179,6 +219,32 @@
         }
     }
 
+    function fetchStylesheetText(href) {
+        const cache = window.__pfFetchCache;
+        if (cache) {
+            if (!cache.has(href)) {
+                cache.set(
+                    href,
+                    fetch(href)
+                        .then(function (res) {
+                            if (!res.ok) throw new Error("status " + res.status);
+                            return res.text();
+                        })
+                        .catch(function (err) {
+                            cache.delete(href);
+                            throw err;
+                        })
+                );
+            }
+            return cache.get(href);
+        }
+        return fetch(href)
+            .then(function (res) {
+                if (!res.ok) throw new Error("status " + res.status);
+                return res.text();
+            });
+    }
+
     function processLinkNode(link) {
         if (!link || link.tagName !== 'LINK' || link.rel !== 'stylesheet' || !link.href) return;
         if (processedLinks.get(link) === link.href) return;
@@ -186,12 +252,12 @@
 
         const href = link.href;
         dbg('processLinkNode: fetching stylesheet:', href);
-        fetch(href)
-            .then(res => {
-                if (!res.ok) throw new Error('status ' + res.status);
-                return res.text();
-            })
-            .then(css => {
+        fetchStylesheetText(href)
+            .then(function (css) {
+                if (/@layer/i.test(css)) {
+                    dbg('  skipping link with @layer (css-layers polyfill owns this sheet):', href);
+                    return;
+                }
                 if (/\bmask/.test(css)) {
                     const patched = addWebkitPrefixToText(css);
                     if (patched !== css) {
@@ -215,21 +281,29 @@
 
     // ---- Inline style attribute intercept (setAttribute) ----
     (function setupAttributeInterception() {
-        const origSetAttribute = Element.prototype.setAttribute;
-        Element.prototype.setAttribute = function (name, value) {
-            origSetAttribute.call(this, name, value);
-            if (name === 'style' && typeof value === 'string' && /\bmask/.test(value)) {
-                dbg('setAttribute intercepted mask style on', this.tagName, ':', value.slice(0, 80));
-                try {
-                    // Update the style declaration (our patched setProperty handles it)
-                    const parsed = addWebkitPrefixToText(value);
-                    if (parsed !== value) {
-                        origSetAttribute.call(this, 'style', parsed);
-                    }
-                } catch (_) {}
+        if (!window.__pfHookPrototype) return;
+        window.__pfHookPrototype(
+            Element.prototype,
+            "setAttribute",
+            function (orig, name, value) {
+                orig.call(this, name, value);
+                if (name === "style" && typeof value === "string" && /\bmask/.test(value)) {
+                    dbg(
+                        "setAttribute intercepted mask style on",
+                        this.tagName,
+                        ":",
+                        value.slice(0, 80)
+                    );
+                    try {
+                        const parsed = addWebkitPrefixToText(value);
+                        if (parsed !== value) {
+                            return orig.call(this, "style", parsed);
+                        }
+                    } catch (_) {}
+                }
             }
-        };
-        dbg('setAttribute monkeypatch installed');
+        );
+        dbg("setAttribute monkeypatch installed");
     })();
 
     // ---- Shadow DOM support ----
@@ -339,5 +413,6 @@
 
     processAll();
     setupMutationListener();
+    window.__pfPatchMaskInCSS = addWebkitPrefixToText;
     dbg('init complete. hub available:', !!window.__pfRegisterMutationListener);
 })();

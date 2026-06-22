@@ -1,1 +1,1 @@
-"use strict";(function(){if(!Element.prototype._originalMatches){Element.prototype._originalMatches=Element.prototype.matches;Element.prototype.matches=function(selector){var modifiedSelector=selector.replace(/:modal/g,".modal");return Element.prototype._originalMatches.call(this,modifiedSelector)}}})();
+Element.prototype._originalMatches||(Element.prototype._originalMatches=Element.prototype.matches,Element.prototype.matches=function(e){e=e.replace(/:modal/g,".modal");return Element.prototype._originalMatches.call(this,e)});

@@ -5,6 +5,9 @@
 static NSMutableDictionary<NSString *, NSString *> *defaultCustomUserAgents = nil;
 static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = nil;
 
+static NSDictionary<NSString *, NSString *> *cachedMergedUserAgents = nil;
+static dispatch_queue_t uaCacheQueue;
+
 @implementation PolyfillsUserAgentManager
 
 + (void)initialize {
@@ -12,9 +15,7 @@ static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = ni
     dispatch_once(&onceToken, ^{
       defaultCustomUserAgents = [NSMutableDictionary dictionary];
       runtimeCustomUserAgents = [NSMutableDictionary dictionary];
-
-      // Sensible default hardcoded custom user agents for specific websites
-      //   defaultCustomUserAgents[@"website.com"] = @"";
+      uaCacheQueue = dispatch_queue_create("com.polyfills.uacache", DISPATCH_QUEUE_SERIAL);
     });
 }
 
@@ -29,6 +30,7 @@ static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = ni
             }
         }
     }
+    [self invalidateCaches];
 }
 
 + (void)addCustomUserAgent:(NSString *)userAgent forWebsites:(NSArray<NSString *> *)websites {
@@ -42,6 +44,50 @@ static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = ni
             }
         }
     }
+    [self invalidateCaches];
+}
+
++ (NSDictionary<NSString *, NSString *> *)mergedCustomUserAgents {
+    [self initialize];
+    __block NSDictionary<NSString *, NSString *> *merged = nil;
+    dispatch_sync(uaCacheQueue, ^{
+        if (cachedMergedUserAgents) {
+            merged = cachedMergedUserAgents;
+            return;
+        }
+
+        NSMutableDictionary *combined = [NSMutableDictionary dictionary];
+        @synchronized(defaultCustomUserAgents) {
+            [combined addEntriesFromDictionary:defaultCustomUserAgents];
+        }
+        @synchronized(runtimeCustomUserAgents) {
+            [combined addEntriesFromDictionary:runtimeCustomUserAgents];
+        }
+
+        CFDictionaryRef userPref = (CFDictionaryRef)CFPreferencesCopyAppValue(customUserAgentsKey, domain);
+        if (userPref && CFGetTypeID(userPref) == CFDictionaryGetTypeID()) {
+            NSDictionary *userPrefDict = (__bridge NSDictionary *)userPref;
+            for (NSString *aKey in userPrefDict) {
+                id val = userPrefDict[aKey];
+                if ([aKey isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
+                    combined[aKey.lowercaseString] = val;
+                }
+            }
+        }
+        if (userPref)
+            CFRelease(userPref);
+
+        cachedMergedUserAgents = [combined copy];
+        merged = cachedMergedUserAgents;
+    });
+    return merged;
+}
+
++ (void)invalidateCaches {
+    [self initialize];
+    dispatch_sync(uaCacheQueue, ^{
+        cachedMergedUserAgents = nil;
+    });
 }
 
 + (NSString *)customUserAgentForURL:(NSURL *)url {
@@ -49,36 +95,10 @@ static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = ni
     if (url == nil)
         return nil;
 
-    NSMutableDictionary *combined = [NSMutableDictionary dictionary];
-
-    // 1. Gather defaults
-    @synchronized(defaultCustomUserAgents) {
-        [combined addEntriesFromDictionary:defaultCustomUserAgents];
-    }
-
-    // 2. Gather runtime programmatic overrides
-    @synchronized(runtimeCustomUserAgents) {
-        [combined addEntriesFromDictionary:runtimeCustomUserAgents];
-    }
-
-    // 3. Gather user preferences
-    CFDictionaryRef userPref = (CFDictionaryRef)CFPreferencesCopyAppValue(customUserAgentsKey, domain);
-    if (userPref && CFGetTypeID(userPref) == CFDictionaryGetTypeID()) {
-        NSDictionary *userPrefDict = (__bridge NSDictionary *)userPref;
-        for (NSString *aKey in userPrefDict) {
-            id val = userPrefDict[aKey];
-            if ([aKey isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]]) {
-                combined[aKey.lowercaseString] = val;
-            }
-        }
-    }
-    if (userPref)
-        CFRelease(userPref);
-
+    NSDictionary *combined = [self mergedCustomUserAgents];
     if (combined.count == 0)
         return nil;
 
-    // Sort rules by length descending so that more specific rules (e.g. paths) are checked first
     NSArray *sortedRules =
         [combined.allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *rule1, NSString *rule2) {
           if (rule1.length > rule2.length)
@@ -98,3 +118,8 @@ static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = ni
 }
 
 @end
+
+void PFInvalidatePreferenceCaches(void) {
+    [PolyfillsUserAgentManager invalidateCaches];
+    [PolyfillsBlacklistManager invalidateCaches];
+}

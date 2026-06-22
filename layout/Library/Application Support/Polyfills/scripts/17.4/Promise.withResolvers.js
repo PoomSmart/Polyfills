@@ -1,1 +1,1 @@
-"use strict";if(typeof Promise.withResolvers==="undefined"){Promise.withResolvers=function(){var resolve,reject;var promise=new Promise(function(res,rej){resolve=res;reject=rej});return{promise:promise,resolve:resolve,reject:reject}}}
+void 0===Promise.withResolvers&&(Promise.withResolvers=function(){var o,i;return{promise:new Promise(function(e,r){o=e,i=r}),resolve:o,reject:i}});

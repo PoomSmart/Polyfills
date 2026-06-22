@@ -1,1 +1,1 @@
-"use strict";if(!Array.prototype.at){Object.defineProperty(Array.prototype,"at",{value:function value(index){if(index<0)index=this.length+index;if(index>=0&&index<this.length)return this[index];return undefined},writable:true,configurable:true})}
+Array.prototype.at||Object.defineProperty(Array.prototype,"at",{value:function(t){if(0<=(t=t<0?this.length+t:t)&&t<this.length)return this[t]},writable:!0,configurable:!0});

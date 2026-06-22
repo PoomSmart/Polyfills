@@ -21,7 +21,7 @@
  * JavaScript files (.js) in each directory are loaded alphabetically.
  * Version directories are auto-discovered and sorted in ascending order.
  * Version-specific directories are only loaded if the current iOS
- * version is older than the directory version.
+ * version is older than the directory version (e.g. 15.4/ loads on iOS < 15.4).
  */
 
 #define CHECK_TARGET
@@ -113,6 +113,51 @@ static NSString *loadJSFromFile(NSString *filePath) {
     return content;
 }
 
+// Helper function to escape a filename for safe embedding in generated JS
+static NSString *jsEscapedString(NSString *string) {
+    if (!string) return @"\"\"";
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@[string] options:0 error:nil];
+    if (!data) return @"\"\"";
+    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (json.length >= 2) {
+        return [json substringWithRange:NSMakeRange(1, json.length - 2)];
+    }
+    return @"\"\"";
+}
+
+// Global variables for script loading
+static dispatch_queue_t scriptLoadingQueue;
+static NSString *cachedCombinedStartScripts = nil;
+static NSString *cachedCombinedEndScripts = nil;
+
+// Cached disabled-script set; rebuilt when preferences change.
+static NSSet *cachedDisabledScripts = nil;
+
+static NSSet *disabledScriptsSet(void) {
+    if (cachedDisabledScripts) return cachedDisabledScripts;
+    CFArrayRef disabledScripts = (CFArrayRef)CFPreferencesCopyAppValue(disabledScriptsKey, domain);
+    NSMutableSet *disabledSet = [NSMutableSet set];
+    if (disabledScripts && CFGetTypeID(disabledScripts) == CFArrayGetTypeID()) {
+        NSArray *arr = (__bridge NSArray *)disabledScripts;
+        for (id obj in arr) {
+            if ([obj isKindOfClass:[NSString class]]) {
+                [disabledSet addObject:[(NSString *)obj lowercaseString]];
+            }
+        }
+    }
+    if (disabledScripts) CFRelease(disabledScripts);
+    cachedDisabledScripts = [disabledSet copy];
+    return cachedDisabledScripts;
+}
+
+static void invalidateScriptBundleCache(void) {
+    cachedDisabledScripts = nil;
+    cachedCombinedStartScripts = nil;
+    cachedCombinedEndScripts = nil;
+}
+
+static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsDir);
+
 // Helper function to concatenate all JS files in a directory
 static NSString *loadJSFromDirectory(NSString *directoryPath) {
     NSFileManager *fileManager = [NSFileManager defaultManager];
@@ -133,20 +178,7 @@ static NSString *loadJSFromDirectory(NSString *directoryPath) {
                        sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
 
     NSMutableString *combinedScript = [NSMutableString string];
-    // Load user preferences once per directory load
-    CFArrayRef disabledScripts = (CFArrayRef)CFPreferencesCopyAppValue(disabledScriptsKey, domain);
-    NSSet *disabledSet = nil;
-    if (disabledScripts && CFGetTypeID(disabledScripts) == CFArrayGetTypeID()) {
-        NSArray *arr = (__bridge NSArray *)disabledScripts;
-        NSMutableArray *lower = [NSMutableArray arrayWithCapacity:arr.count];
-        for (id obj in arr) {
-            if ([obj isKindOfClass:[NSString class]]) {
-                [lower addObject:[(NSString *)obj lowercaseString]];
-            }
-        }
-        if (lower.count) disabledSet = [NSSet setWithArray:lower];
-    }
-    if (disabledScripts) CFRelease(disabledScripts);
+    NSSet *disabledSet = disabledScriptsSet();
 
     for (NSString *fileName in jsFiles) {
         if (disabledSet && [disabledSet containsObject:fileName.lowercaseString]) continue;
@@ -160,7 +192,8 @@ static NSString *loadJSFromDirectory(NSString *directoryPath) {
             content = [js stringByAppendingString:content];
         }
         // Wrap every script with a guard that consults window.__pfShouldRun(scriptName)
-        NSString *wrapped = [NSString stringWithFormat:@"(function(n){try{if(window.__pfShouldRun && !window.__pfShouldRun(n)) return;}catch(e){}\n%@\n})(\"%@\");\n", content, fileName];
+        NSString *escapedName = jsEscapedString(fileName);
+        NSString *wrapped = [NSString stringWithFormat:@"(function(n){try{if(window.__pfShouldRun && !window.__pfShouldRun(n)) return;}catch(e){}\n%@\n})(%@);\n", content, escapedName];
         [combinedScript appendString:wrapped];
     }
 
@@ -172,14 +205,120 @@ static NSString *getPolyfillsBasePath() {
     return PS_ROOT_PATH_NS(@"/Library/Application Support/Polyfills");
 }
 
-// Global variables for script loading
-static dispatch_queue_t scriptLoadingQueue;
+static NSString *buildBlacklistPrelude(void) {
+    NSArray *globalBlacklist = [PolyfillsBlacklistManager mergedGlobalBlacklist];
+    NSDictionary *blacklistDict = [PolyfillsBlacklistManager mergedScriptBlacklists];
+
+    NSMutableDictionary *combinedBlacklist = [NSMutableDictionary dictionary];
+    if (blacklistDict) {
+        [combinedBlacklist addEntriesFromDictionary:blacklistDict];
+    }
+    if (globalBlacklist.count > 0) {
+        combinedBlacklist[@"*"] = globalBlacklist;
+    }
+    if (combinedBlacklist.count == 0) {
+        return nil;
+    }
+
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:combinedBlacklist options:0 error:nil];
+    NSString *json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+    if (!json) json = @"{}";
+
+    NSMutableString *p = [NSMutableString string];
+    [p appendString:@"(function(){\n"];
+    [p appendString:@"var __pfBL = "];
+    [p appendString:json];
+    [p appendString:@";\n"];
+    [p appendString:@"window.__pfShouldRun = function(script){\n"];
+    [p appendString:@"  var orig=script;\n"];
+    [p appendString:@"  script=String(script||'').toLowerCase();\n"];
+    [p appendString:@"  var h=location.hostname.toLowerCase();\n"];
+    [p appendString:@"  var path=location.pathname;\n"];
+    [p appendString:@"  function matchesDomain(e){\n"];
+    [p appendString:@"    if(!e)return false;\n"];
+    [p appendString:@"    e=String(e).toLowerCase();\n"];
+    [p appendString:@"    var slash=e.indexOf('/');\n"];
+    [p appendString:@"    if(slash<0){\n"];
+    [p appendString:@"      return h===e||h.endsWith('.'+e);\n"];
+    [p appendString:@"    }else{\n"];
+    [p appendString:@"      var host=e.substring(0,slash);\n"];
+    [p appendString:@"      var pref=e.substring(slash+1);\n"];
+    [p appendString:@"      if(h===host||h.endsWith('.'+host)){\n"];
+    [p appendString:@"        var prefPath='/'+pref.replace(/^\\/+/,'');\n"];
+    [p appendString:@"        return path===prefPath||path.startsWith(prefPath+(prefPath.endsWith('/')?'':'/'));\n"];
+    [p appendString:@"      }\n"];
+    [p appendString:@"    }\n"];
+    [p appendString:@"    return false;\n"];
+    [p appendString:@"  }\n"];
+    [p appendString:@"  var globalArr=__pfBL['*'];\n"];
+    [p appendString:@"  if(globalArr&&globalArr.length){\n"];
+    [p appendString:@"    for(var i=0;i<globalArr.length;i++){\n"];
+    [p appendString:@"      if(matchesDomain(globalArr[i])){\n"];
+    [p appendString:@"        try{console.log('[Polyfills] Skipped '+orig+' (global blacklist)');}catch(_){}\n"];
+    [p appendString:@"        return false;\n"];
+    [p appendString:@"      }\n"];
+    [p appendString:@"    }\n"];
+    [p appendString:@"  }\n"];
+    [p appendString:@"  var arr=__pfBL[script];\n"];
+    [p appendString:@"  if(!arr||!arr.length)return true;\n"];
+    [p appendString:@"  for(var i=0;i<arr.length;i++){\n"];
+    [p appendString:@"    if(matchesDomain(arr[i])){\n"];
+    [p appendString:@"      try{console.log('[Polyfills] Skipped '+orig+' (script blacklist)');}catch(_){}\n"];
+    [p appendString:@"      return false;\n"];
+    [p appendString:@"    }\n"];
+    [p appendString:@"  }\n"];
+    [p appendString:@"  return true;\n"];
+    [p appendString:@"};\n"];
+    [p appendString:@"})();\n"];
+    return p;
+}
+
+static void buildCombinedScriptBundles(void) {
+    NSString *polyfillsBasePath = getPolyfillsBasePath();
+    NSMutableString *combinedStartScripts = [NSMutableString string];
+    NSMutableString *combinedEndScripts = [NSMutableString string];
+
+    NSString *priorityScripts = loadScriptsForIOSVersion(polyfillsBasePath, @"scripts-priority");
+    if (priorityScripts.length > 0) {
+        [combinedStartScripts appendString:priorityScripts];
+        [combinedStartScripts appendString:@"\n"];
+    }
+
+    NSString *mainScripts = loadScriptsForIOSVersion(polyfillsBasePath, @"scripts");
+    if (mainScripts.length > 0) {
+        [combinedStartScripts appendString:mainScripts];
+        [combinedStartScripts appendString:@"\n"];
+    }
+
+    NSString *postScripts = loadScriptsForIOSVersion(polyfillsBasePath, @"scripts-post");
+    if (postScripts.length > 0) {
+        [combinedEndScripts appendString:postScripts];
+    }
+
+    NSString *prelude = buildBlacklistPrelude();
+    if (prelude) {
+        if (combinedStartScripts.length > 0) {
+            [combinedStartScripts insertString:prelude atIndex:0];
+        } else if (combinedEndScripts.length > 0) {
+            [combinedEndScripts insertString:prelude atIndex:0];
+        }
+    }
+
+    cachedCombinedStartScripts = [combinedStartScripts copy];
+    cachedCombinedEndScripts = [combinedEndScripts copy];
+}
+
+static void ensureScriptsLoaded(void) {
+    dispatch_sync(scriptLoadingQueue, ^{
+        if (!cachedCombinedStartScripts && !cachedCombinedEndScripts) {
+            buildCombinedScriptBundles();
+        }
+    });
+}
 
 // Helper function to load scripts for a specific iOS version or older
-// If injectionCallback is provided, scripts are injected immediately as they're loaded
-static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsDir, void (^injectionCallback)(NSString *script, BOOL isPost)) {
+static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsDir) {
     NSString *fullBasePath = [basePath stringByAppendingPathComponent:scriptsDir];
-    BOOL isPost = [scriptsDir hasSuffix:@"-post"];
 
     NSMutableString *combinedScripts = [NSMutableString string];
 
@@ -187,9 +326,6 @@ static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsD
     NSString *baseScriptsPath = [fullBasePath stringByAppendingPathComponent:@"base"];
     NSString *baseScripts = loadJSFromDirectory(baseScriptsPath);
     if (baseScripts.length > 0) {
-        if (injectionCallback) {
-            injectionCallback(baseScripts, isPost);
-        }
         [combinedScripts appendString:baseScripts];
         [combinedScripts appendString:@"\n"];
     }
@@ -250,9 +386,6 @@ static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsD
         NSString *versionPath = [fullBasePath stringByAppendingPathComponent:versionStr];
         NSString *versionScripts = loadJSFromDirectory(versionPath);
         if (versionScripts.length > 0) {
-            if (injectionCallback) {
-                injectionCallback(versionScripts, isPost);
-            }
             [combinedScripts appendString:versionScripts];
             [combinedScripts appendString:@"\n"];
         }
@@ -380,133 +513,22 @@ static void overrideUserAgent(WKWebView *webView) {
     applyDefaultUserAgentOverride(webView);
 }
 
-// Function to load and inject scripts with optimized batching
+// Function to load and inject scripts synchronously from the prebuilt bundle cache
 static void loadAndInjectScriptsImmediately(WKUserContentController *controller) {
-    NSString *polyfillsBasePath = getPolyfillsBasePath();
+    ensureScriptsLoaded();
 
-    // Load and inject scripts in batches to minimize WKUserScript overhead
-    dispatch_async(scriptLoadingQueue, ^{
-        @autoreleasepool {
-            NSMutableString *combinedStartScripts = [NSMutableString string];
-            NSMutableString *combinedEndScripts = [NSMutableString string];
-
-            // Load priority scripts (document start)
-            NSString *priorityScripts = loadScriptsForIOSVersion(polyfillsBasePath, @"scripts-priority", nil);
-            if (priorityScripts.length > 0) {
-                [combinedStartScripts appendString:priorityScripts];
-                [combinedStartScripts appendString:@"\n"];
-            }
-
-            // Load main scripts (document start)
-            NSString *mainScripts = loadScriptsForIOSVersion(polyfillsBasePath, @"scripts", nil);
-            if (mainScripts.length > 0) {
-                [combinedStartScripts appendString:mainScripts];
-                [combinedStartScripts appendString:@"\n"];
-            }
-
-            // Load post scripts (document end)
-            NSString *postScripts = loadScriptsForIOSVersion(polyfillsBasePath, @"scripts-post", nil);
-            if (postScripts.length > 0) {
-                [combinedEndScripts appendString:postScripts];
-            }
-
-            NSArray *globalBlacklist = [PolyfillsBlacklistManager mergedGlobalBlacklist];
-            NSDictionary *blacklistDict = [PolyfillsBlacklistManager mergedScriptBlacklists];
-
-            // Build combined blacklist dictionary with global blacklist under "*" key
-            NSMutableDictionary *combinedBlacklist = [NSMutableDictionary dictionary];
-            if (blacklistDict) {
-                [combinedBlacklist addEntriesFromDictionary:blacklistDict];
-            }
-            if (globalBlacklist && globalBlacklist.count > 0) {
-                combinedBlacklist[@"*"] = globalBlacklist;
-            }
-
-            // Build prelude defining window.__pfShouldRun for blacklist enforcement
-            NSString *prelude = nil;
-            if (combinedBlacklist.count > 0) {
-                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:combinedBlacklist options:0 error:nil];
-                NSString *json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
-                if (!json) json = @"{}";
-                
-                // JavaScript function that checks both global and per-script blacklists
-                NSMutableString *p = [NSMutableString string];
-                [p appendString:@"(function(){\n"];
-                [p appendString:@"var __pfBL = "];
-                [p appendString:json];
-                [p appendString:@";\n"];
-                [p appendString:@"window.__pfShouldRun = function(script){\n"];
-                [p appendString:@"  var orig=script;\n"];
-                [p appendString:@"  script=String(script||'').toLowerCase();\n"];
-                [p appendString:@"  var h=location.hostname.toLowerCase();\n"];
-                [p appendString:@"  var path=location.pathname;\n"];
-                [p appendString:@"  function matchesDomain(e){\n"];
-                [p appendString:@"    if(!e)return false;\n"];
-                [p appendString:@"    e=String(e).toLowerCase();\n"];
-                [p appendString:@"    var slash=e.indexOf('/');\n"];
-                [p appendString:@"    if(slash<0){\n"];
-                [p appendString:@"      return h===e||h.endsWith('.'+e);\n"];
-                [p appendString:@"    }else{\n"];
-                [p appendString:@"      var host=e.substring(0,slash);\n"];
-                [p appendString:@"      var pref=e.substring(slash+1);\n"];
-                [p appendString:@"      if(h===host||h.endsWith('.'+host)){\n"];
-                [p appendString:@"        var prefPath='/'+pref.replace(/^\\/+/,'');\n"];
-                [p appendString:@"        return path===prefPath||path.startsWith(prefPath+(prefPath.endsWith('/')?'':'/'));\n"];
-                [p appendString:@"      }\n"];
-                [p appendString:@"    }\n"];
-                [p appendString:@"    return false;\n"];
-                [p appendString:@"  }\n"];
-                [p appendString:@"  var globalArr=__pfBL['*'];\n"];
-                [p appendString:@"  if(globalArr&&globalArr.length){\n"];
-                [p appendString:@"    for(var i=0;i<globalArr.length;i++){\n"];
-                [p appendString:@"      if(matchesDomain(globalArr[i])){\n"];
-                [p appendString:@"        try{console.log('[Polyfills] Skipped '+orig+' (global blacklist)');}catch(_){}\n"];
-                [p appendString:@"        return false;\n"];
-                [p appendString:@"      }\n"];
-                [p appendString:@"    }\n"];
-                [p appendString:@"  }\n"];
-                [p appendString:@"  var arr=__pfBL[script];\n"];
-                [p appendString:@"  if(!arr||!arr.length)return true;\n"];
-                [p appendString:@"  for(var i=0;i<arr.length;i++){\n"];
-                [p appendString:@"    if(matchesDomain(arr[i])){\n"];
-                [p appendString:@"      try{console.log('[Polyfills] Skipped '+orig+' (script blacklist)');}catch(_){}\n"];
-                [p appendString:@"      return false;\n"];
-                [p appendString:@"    }\n"];
-                [p appendString:@"  }\n"];
-                [p appendString:@"  return true;\n"];
-                [p appendString:@"};\n"];
-                [p appendString:@"})();\n"];
-                prelude = p;
-            }
-
-            // If there are only post scripts but no start scripts, attach prelude to post scripts.
-            if (prelude) {
-                if (combinedStartScripts.length > 0) {
-                    [combinedStartScripts insertString:prelude atIndex:0];
-                } else if (combinedEndScripts.length > 0) {
-                    [combinedEndScripts insertString:prelude atIndex:0];
-                }
-            }
-
-            // Inject combined scripts as single WKUserScript objects (each individual script wrapper checks blacklist)
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (combinedStartScripts.length > 0 && controller) {
-                    NSString *source = [combinedStartScripts copy];
-                    [controller addUserScript:[[WKUserScript alloc] initWithSource:source
-                                                                      injectionTime:WKUserScriptInjectionTimeAtDocumentStart
-                                                                   forMainFrameOnly:NO]];
-                    HBLogDebug(@"Polyfills: Injected combined start scripts (%lu chars)", (unsigned long)combinedStartScripts.length);
-                }
-                if (combinedEndScripts.length > 0 && controller) {
-                    NSString *source = [combinedEndScripts copy];
-                    [controller addUserScript:[[WKUserScript alloc] initWithSource:source
-                                                                      injectionTime:WKUserScriptInjectionTimeAtDocumentEnd
-                                                                   forMainFrameOnly:NO]];
-                    HBLogDebug(@"Polyfills: Injected combined end scripts (%lu chars)", (unsigned long)combinedEndScripts.length);
-                }
-            });
-        }
-    });
+    if (cachedCombinedStartScripts.length > 0 && controller) {
+        [controller addUserScript:[[WKUserScript alloc] initWithSource:cachedCombinedStartScripts
+                                                          injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                                                       forMainFrameOnly:NO]];
+        HBLogDebug(@"Polyfills: Injected combined start scripts (%lu chars)", (unsigned long)cachedCombinedStartScripts.length);
+    }
+    if (cachedCombinedEndScripts.length > 0 && controller) {
+        [controller addUserScript:[[WKUserScript alloc] initWithSource:cachedCombinedEndScripts
+                                                          injectionTime:WKUserScriptInjectionTimeAtDocumentEnd
+                                                       forMainFrameOnly:NO]];
+        HBLogDebug(@"Polyfills: Injected combined end scripts (%lu chars)", (unsigned long)cachedCombinedEndScripts.length);
+    }
 }
 
 // Dedicated KVO observer for WKWebView URL changes.
@@ -630,7 +652,7 @@ static const void *InjectedKey = &InjectedKey;
     if (userAgentEnabled && resolvedURL != nil) {
         NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
         if (customUA != nil) {
-            %orig(applicationNameForUserAgent);
+            %orig(customUA);
             return;
         }
         if (!isUserAgentBlacklistedForURL(resolvedURL) && !isIOSVersionOrNewer(16, 3)) {
@@ -653,7 +675,7 @@ static const void *InjectedKey = &InjectedKey;
         if (customUA != nil) {
             value = customUA;
         } else if (!isUserAgentBlacklistedForURL(self.URL) && !isIOSVersionOrNewer(16, 3)) {
-            value = IS_IPAD ? desktopUserAgent : mobileUserAgent;
+            value = getFinalUA(value);
         }
     }
     %orig(value, field);
@@ -693,14 +715,27 @@ static const void *InjectedKey = &InjectedKey;
 
 %end
 
+static void PFPrefChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    PFInvalidatePreferenceCaches();
+    dispatch_sync(scriptLoadingQueue, ^{
+        invalidateScriptBundleCache();
+    });
+}
+
 %ctor {
     if (!isTarget(TargetTypeApps)) return;
     Boolean keyExists;
     Boolean enabled = CFPreferencesGetAppBooleanValue(key, domain, &keyExists);
-    if (!keyExists ? NO : !enabled) return;
+    if (!(keyExists ? enabled : YES)) return;
 
-    // Create queue for async script loading
     scriptLoadingQueue = dispatch_queue_create("com.polyfills.scriptloading", DISPATCH_QUEUE_SERIAL);
+
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+                                  NULL,
+                                  PFPrefChangedCallback,
+                                  CFSTR("com.apple.UIKit/preferences changed"),
+                                  NULL,
+                                  CFNotificationSuspensionBehaviorCoalesce);
 
     %init;
 

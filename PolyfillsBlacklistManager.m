@@ -9,6 +9,11 @@ static NSMutableSet<NSString *> *runtimeUABlacklist = nil;
 static NSMutableSet<NSString *> *runtimeGlobalBlacklist = nil;
 static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScriptBlacklists = nil;
 
+static NSArray<NSString *> *cachedUABlacklist = nil;
+static NSArray<NSString *> *cachedGlobalBlacklist = nil;
+static NSDictionary<NSString *, NSArray<NSString *> *> *cachedScriptBlacklists = nil;
+static dispatch_queue_t blacklistCacheQueue;
+
 @implementation PolyfillsBlacklistManager
 
 + (void)initialize {
@@ -24,7 +29,6 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
         ]];
         
         defaultScriptBlacklists = [NSMutableDictionary dictionary];
-        // Example of a script-specific hardcoded default blacklist
         defaultScriptBlacklists[@"regexp.min.js"] = [NSMutableSet setWithArray:@[
             @"duck.ai",
         ]];
@@ -32,6 +36,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
         runtimeUABlacklist = [NSMutableSet set];
         runtimeGlobalBlacklist = [NSMutableSet set];
         runtimeScriptBlacklists = [NSMutableDictionary dictionary];
+        blacklistCacheQueue = dispatch_queue_create("com.polyfills.blacklistcache", DISPATCH_QUEUE_SERIAL);
     });
 }
 
@@ -44,6 +49,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
             }
         }
     }
+    [self invalidateCaches];
 }
 
 + (void)registerDefaultGlobalBlacklistedWebsites:(NSArray<NSString *> *)websites {
@@ -55,6 +61,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
             }
         }
     }
+    [self invalidateCaches];
 }
 
 + (void)registerDefaultBlacklistedWebsites:(NSArray<NSString *> *)websites forScript:(NSString *)scriptName {
@@ -73,6 +80,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
             }
         }
     }
+    [self invalidateCaches];
 }
 
 + (void)addUserAgentBlacklistedWebsites:(NSArray<NSString *> *)websites {
@@ -84,6 +92,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
             }
         }
     }
+    [self invalidateCaches];
 }
 
 + (void)addGlobalBlacklistedWebsites:(NSArray<NSString *> *)websites {
@@ -95,6 +104,7 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
             }
         }
     }
+    [self invalidateCaches];
 }
 
 + (void)addBlacklistedWebsites:(NSArray<NSString *> *)websites forScript:(NSString *)scriptName {
@@ -113,101 +123,141 @@ static NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *runtimeScrip
             }
         }
     }
+    [self invalidateCaches];
+}
+
++ (void)invalidateCaches {
+    [self initialize];
+    dispatch_sync(blacklistCacheQueue, ^{
+        cachedUABlacklist = nil;
+        cachedGlobalBlacklist = nil;
+        cachedScriptBlacklists = nil;
+    });
 }
 
 + (NSArray<NSString *> *)mergedUserAgentBlacklist {
     [self initialize];
-    NSMutableSet *merged = [NSMutableSet set];
-    CFArrayRef userPref = (CFArrayRef)CFPreferencesCopyAppValue(userAgentBlacklistKey, domain);
-    if (userPref && CFGetTypeID(userPref) == CFArrayGetTypeID()) {
-        for (id obj in (__bridge NSArray *)userPref) {
-            if ([obj isKindOfClass:[NSString class]]) {
-                [merged addObject:[(NSString *)obj lowercaseString]];
+    __block NSArray<NSString *> *merged = nil;
+    dispatch_sync(blacklistCacheQueue, ^{
+        if (cachedUABlacklist) {
+            merged = cachedUABlacklist;
+            return;
+        }
+
+        NSMutableSet *set = [NSMutableSet set];
+        CFArrayRef userPref = (CFArrayRef)CFPreferencesCopyAppValue(userAgentBlacklistKey, domain);
+        if (userPref && CFGetTypeID(userPref) == CFArrayGetTypeID()) {
+            for (id obj in (__bridge NSArray *)userPref) {
+                if ([obj isKindOfClass:[NSString class]]) {
+                    [set addObject:[(NSString *)obj lowercaseString]];
+                }
             }
         }
-    }
-    if (userPref) CFRelease(userPref);
+        if (userPref) CFRelease(userPref);
 
-    @synchronized (defaultUABlacklist) {
-        [merged unionSet:defaultUABlacklist];
-    }
-    @synchronized (runtimeUABlacklist) {
-        [merged unionSet:runtimeUABlacklist];
-    }
-    return [merged allObjects];
+        @synchronized (defaultUABlacklist) {
+            [set unionSet:defaultUABlacklist];
+        }
+        @synchronized (runtimeUABlacklist) {
+            [set unionSet:runtimeUABlacklist];
+        }
+        cachedUABlacklist = [set allObjects];
+        merged = cachedUABlacklist;
+    });
+    return merged;
 }
 
 + (NSArray<NSString *> *)mergedGlobalBlacklist {
     [self initialize];
-    NSMutableSet *merged = [NSMutableSet set];
-    CFArrayRef userPref = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
-    if (userPref && CFGetTypeID(userPref) == CFArrayGetTypeID()) {
-        for (id obj in (__bridge NSArray *)userPref) {
-            if ([obj isKindOfClass:[NSString class]]) {
-                [merged addObject:[(NSString *)obj lowercaseString]];
+    __block NSArray<NSString *> *merged = nil;
+    dispatch_sync(blacklistCacheQueue, ^{
+        if (cachedGlobalBlacklist) {
+            merged = cachedGlobalBlacklist;
+            return;
+        }
+
+        NSMutableSet *set = [NSMutableSet set];
+        CFArrayRef userPref = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
+        if (userPref && CFGetTypeID(userPref) == CFArrayGetTypeID()) {
+            for (id obj in (__bridge NSArray *)userPref) {
+                if ([obj isKindOfClass:[NSString class]]) {
+                    [set addObject:[(NSString *)obj lowercaseString]];
+                }
             }
         }
-    }
-    if (userPref) CFRelease(userPref);
+        if (userPref) CFRelease(userPref);
 
-    @synchronized (defaultGlobalBlacklist) {
-        [merged unionSet:defaultGlobalBlacklist];
-    }
-    @synchronized (runtimeGlobalBlacklist) {
-        [merged unionSet:runtimeGlobalBlacklist];
-    }
-    return [merged allObjects];
+        @synchronized (defaultGlobalBlacklist) {
+            [set unionSet:defaultGlobalBlacklist];
+        }
+        @synchronized (runtimeGlobalBlacklist) {
+            [set unionSet:runtimeGlobalBlacklist];
+        }
+        cachedGlobalBlacklist = [set allObjects];
+        merged = cachedGlobalBlacklist;
+    });
+    return merged;
 }
 
 + (NSDictionary<NSString *, NSArray<NSString *> *> *)mergedScriptBlacklists {
     [self initialize];
-    NSMutableDictionary<NSString *, NSMutableSet *> *merged = [NSMutableDictionary dictionary];
-    
-    CFDictionaryRef userPref = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
-    if (userPref && CFGetTypeID(userPref) == CFDictionaryGetTypeID()) {
-        NSDictionary *userPrefDict = (__bridge NSDictionary *)userPref;
-        for (NSString *aKey in userPrefDict) {
-            id val = userPrefDict[aKey];
-            if ([val isKindOfClass:[NSArray class]]) {
-                NSMutableSet *set = [NSMutableSet set];
-                for (id obj in val) {
-                    if ([obj isKindOfClass:[NSString class]]) {
-                        [set addObject:[(NSString *)obj lowercaseString]];
+    __block NSDictionary<NSString *, NSArray<NSString *> *> *merged = nil;
+    dispatch_sync(blacklistCacheQueue, ^{
+        if (cachedScriptBlacklists) {
+            merged = cachedScriptBlacklists;
+            return;
+        }
+
+        NSMutableDictionary<NSString *, NSMutableSet *> *dict = [NSMutableDictionary dictionary];
+        
+        CFDictionaryRef userPref = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
+        if (userPref && CFGetTypeID(userPref) == CFDictionaryGetTypeID()) {
+            NSDictionary *userPrefDict = (__bridge NSDictionary *)userPref;
+            for (NSString *aKey in userPrefDict) {
+                id val = userPrefDict[aKey];
+                if ([val isKindOfClass:[NSArray class]]) {
+                    NSMutableSet *set = [NSMutableSet set];
+                    for (id obj in val) {
+                        if ([obj isKindOfClass:[NSString class]]) {
+                            [set addObject:[(NSString *)obj lowercaseString]];
+                        }
                     }
+                    dict[aKey.lowercaseString] = set;
                 }
-                merged[aKey.lowercaseString] = set;
             }
         }
-    }
-    if (userPref) CFRelease(userPref);
+        if (userPref) CFRelease(userPref);
 
-    @synchronized (defaultScriptBlacklists) {
-        for (NSString *aKey in defaultScriptBlacklists) {
-            NSMutableSet *set = merged[aKey];
-            if (!set) {
-                set = [NSMutableSet set];
-                merged[aKey] = set;
+        @synchronized (defaultScriptBlacklists) {
+            for (NSString *aKey in defaultScriptBlacklists) {
+                NSMutableSet *set = dict[aKey];
+                if (!set) {
+                    set = [NSMutableSet set];
+                    dict[aKey] = set;
+                }
+                [set unionSet:defaultScriptBlacklists[aKey]];
             }
-            [set unionSet:defaultScriptBlacklists[aKey]];
         }
-    }
 
-    @synchronized (runtimeScriptBlacklists) {
-        for (NSString *aKey in runtimeScriptBlacklists) {
-            NSMutableSet *set = merged[aKey];
-            if (!set) {
-                set = [NSMutableSet set];
-                merged[aKey] = set;
+        @synchronized (runtimeScriptBlacklists) {
+            for (NSString *aKey in runtimeScriptBlacklists) {
+                NSMutableSet *set = dict[aKey];
+                if (!set) {
+                    set = [NSMutableSet set];
+                    dict[aKey] = set;
+                }
+                [set unionSet:runtimeScriptBlacklists[aKey]];
             }
-            [set unionSet:runtimeScriptBlacklists[aKey]];
         }
-    }
 
-    NSMutableDictionary *result = [NSMutableDictionary dictionary];
-    for (NSString *aKey in merged) {
-        result[aKey] = [merged[aKey] allObjects];
-    }
-    return [result copy];
+        NSMutableDictionary *result = [NSMutableDictionary dictionary];
+        for (NSString *aKey in dict) {
+            result[aKey] = [dict[aKey] allObjects];
+        }
+        cachedScriptBlacklists = [result copy];
+        merged = cachedScriptBlacklists;
+    });
+    return merged;
 }
 
 @end

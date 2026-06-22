@@ -1,10 +1,36 @@
-// ChatGPT
 (function polyfillCSSLayer() {
+    var __PF_DEBUG__ = false;
+    const LOG = "[css-layers]";
+    function dbg() {
+        if (!__PF_DEBUG__) return;
+        try {
+            console.log.apply(console, [LOG].concat(Array.prototype.slice.call(arguments)));
+        } catch (_) {}
+    }
+
     if (window.__cssLayersPolyfillApplied) return;
     window.__cssLayersPolyfillApplied = true;
 
     const processedSheetSignatures = new Map();
-    const injectedStyleIds = new Set();
+    const layerUpdateListeners = [];
+
+    window.__pfOnCssLayersUpdate = function (listener) {
+        if (typeof listener === "function") {
+            layerUpdateListeners.push(listener);
+        }
+    };
+
+    let layerUpdateTimer = null;
+    function notifyLayerUpdate() {
+        clearTimeout(layerUpdateTimer);
+        layerUpdateTimer = setTimeout(function () {
+            for (let i = 0; i < layerUpdateListeners.length; i++) {
+                try {
+                    layerUpdateListeners[i]();
+                } catch (_) {}
+            }
+        }, 50);
+    }
 
     // Parsing utilities
     function cleanCSS(css) {
@@ -22,10 +48,8 @@
                 buffer = '';
 
                 i += 6;
-                // Safe character skipping with bounds checking
-                while (i < css.length && /\s/.test(css[i])) i++;
-                while (i < css.length && /[a-zA-Z0-9_.-]/.test(css[i])) i++;
-                while (i < css.length && /\s/.test(css[i])) i++;
+                // Skip layer name list (supports `@layer a, b, c {`)
+                while (i < css.length && css[i] !== '{') i++;
 
                 if (i < css.length && css[i] === '{') {
                     const { blockContent, endIndex } = extractBlock(css, i);
@@ -122,17 +146,67 @@
         return (h >>> 0).toString(36);
     }
 
-    function injectStyle(css, id) {
+    function injectStyle(css, id, sourceKey) {
         const resolvedId = id || `css-layers-${hashString(css)}`;
-        if (injectedStyleIds.has(resolvedId) || document.getElementById(resolvedId)) {
-            return;
+        const sourceHash = hashString(css);
+        const existingByHash = document.querySelector(
+            'style[data-css-layers-polyfill][data-css-layers-source-hash="' + sourceHash + '"]'
+        );
+        if (existingByHash) {
+            return existingByHash;
         }
-        const style = document.createElement('style');
+        let style = document.getElementById(resolvedId);
+        if (style) {
+            if (style.dataset.cssLayersSourceHash === sourceHash) {
+                return style;
+            }
+            style.dataset.cssLayersSourceHash = sourceHash;
+            delete style.dataset.pfColorMixOrig;
+            style.textContent = css;
+            dbg("Updated injected stylesheet", resolvedId, "bytes=", css.length);
+            notifyLayerUpdate();
+            return style;
+        }
+        style = document.createElement('style');
         style.id = resolvedId;
+        style.dataset.cssLayersSourceHash = sourceHash;
         style.setAttribute('data-css-layers-polyfill', '');
         style.textContent = css;
         document.head.appendChild(style);
-        injectedStyleIds.add(resolvedId);
+        dbg("Injected flattened stylesheet", resolvedId, "bytes=", css.length);
+        notifyLayerUpdate();
+        return style;
+    }
+
+    function processLayeredCSS(cssText, sourceKey) {
+        if (!cssText || !/@layer/i.test(cssText)) return false;
+        let cleaned = cleanCSS(cssText);
+        if (!cleaned.trim()) return false;
+        if (
+            window.__pfPatchMaskInCSS &&
+            /(?:^|[;{])\s*(?:-webkit-)?mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?\s*:/m.test(
+                cleaned
+            )
+        ) {
+            cleaned = window.__pfPatchMaskInCSS(cleaned);
+        }
+        if (
+            window.__pfPatchBackdropFilterInCSS &&
+            /(?:^|[;{])\s*backdrop-filter\s*:/m.test(cleaned)
+        ) {
+            cleaned = window.__pfPatchBackdropFilterInCSS(cleaned);
+        }
+        // if (
+        //     window.__pfPatchContentVisibilityInCSS &&
+        //     /content-visibility\s*:/i.test(cleaned)
+        // ) {
+        //     cleaned = window.__pfPatchContentVisibilityInCSS(cleaned);
+        // }
+        const id = sourceKey
+            ? `css-layers-src-${hashString(sourceKey)}`
+            : `css-layers-${hashString(cleaned)}`;
+        injectStyle(cleaned, id, sourceKey);
+        return true;
     }
 
     function getStyleSheetText(sheet) {
@@ -146,38 +220,127 @@
         }
     }
 
+    function normalizeStylesheetHref(href) {
+        try {
+            return new URL(href, location.href).href;
+        } catch (_) {
+            return href;
+        }
+    }
+
+    function fetchStylesheetText(href) {
+        const normalizedHref = normalizeStylesheetHref(href);
+        const cache = window.__pfFetchCache;
+        if (cache && !cache.has(normalizedHref)) {
+            cache.set(
+                normalizedHref,
+                fetch(normalizedHref, { mode: "cors" })
+                    .then((r) => {
+                        if (!r.ok) {
+                            throw new Error(`Failed to fetch ${normalizedHref}`);
+                        }
+                        return r.text();
+                    })
+                    .catch((e) => {
+                        cache.delete(normalizedHref);
+                        console.warn(
+                            `❌ Could not fetch stylesheet at ${normalizedHref}`,
+                            e
+                        );
+                        return null;
+                    })
+            );
+        }
+        if (cache) {
+            return cache.get(normalizedHref);
+        }
+        return fetch(normalizedHref, { mode: "cors" })
+            .then((r) => {
+                if (!r.ok) {
+                    throw new Error(`Failed to fetch ${normalizedHref}`);
+                }
+                return r.text();
+            })
+            .catch((e) => {
+                console.warn(
+                    `❌ Could not fetch stylesheet at ${normalizedHref}`,
+                    e
+                );
+                return null;
+            });
+    }
+
     async function fetchAndInlineStylesheet(href, sheet = null) {
-        // First try to get content from existing stylesheet object (bypasses CSP)
+        const normalizedHref = normalizeStylesheetHref(href);
+
+        try {
+            const cssText = await fetchStylesheetText(normalizedHref);
+            if (cssText && /@layer/i.test(cssText)) {
+                dbg("Fetched stylesheet with @layer", normalizedHref);
+                return processLayeredCSS(cssText, normalizedHref);
+            }
+        } catch (e) {
+            console.warn(`❌ Could not fetch stylesheet at ${href}`, e);
+        }
+
+        // CSSOM fallback when fetch is unavailable or has no @layer text.
         if (sheet) {
             const cssText = getStyleSheetText(sheet);
-            if (cssText) {
-                const cleaned = cleanCSS(cssText);
-                injectStyle(cleaned);
-                return true;
+            if (cssText && /@layer/i.test(cssText)) {
+                return processLayeredCSS(cssText, normalizedHref);
             }
         }
 
-        // Use shared fetch cache to avoid duplicate requests across polyfills
-        const cache = window.__pfFetchCache;
-        if (cache && !cache.has(href)) {
-            cache.set(href, fetch(href, { mode: 'cors' })
-                .then(r => { if (!r.ok) throw new Error(`Failed to fetch ${href}`); return r.text(); })
-                .catch(e => { console.warn(`❌ Could not fetch stylesheet at ${href}`, e); return null; })
-            );
+        return false;
+    }
+
+    function processInlineStyleNode(styleNode) {
+        if (
+            !styleNode ||
+            styleNode.tagName !== "STYLE" ||
+            styleNode.hasAttribute("data-css-layers-polyfill") ||
+            (styleNode.id && styleNode.id.indexOf("css-layers-src-") === 0) ||
+            styleNode.id?.startsWith("skip-polyfill-") ||
+            !styleNode.textContent.includes("@layer")
+        ) {
+            return;
         }
+
+        const original = styleNode.textContent;
+        if (original.length > 200000) {
+            const existing = document.querySelectorAll(
+                "style[data-css-layers-polyfill]"
+            );
+            for (let i = 0; i < existing.length; i++) {
+                const len = (existing[i].textContent || "").length;
+                if (Math.abs(len - original.length) < 2000) {
+                    return;
+                }
+            }
+        }
+        const inlineId = styleNode.id || hashString(original);
+        const signature = `inline::${inlineId}::${original.length}`;
+        if (processedSheetSignatures.get(inlineId) === signature) {
+            return;
+        }
+
+        const cleaned = cleanCSS(original);
+        if (cleaned.trim()) {
+            processLayeredCSS(original, signature);
+        }
+        processedSheetSignatures.set(inlineId, signature);
+    }
+
+    function canFetchStylesheetHref(href, link) {
         try {
-            const cssText = cache
-                ? await cache.get(href)
-                : await fetch(href, { mode: 'cors' }).then(r => {
-                    if (!r.ok) throw new Error(`Failed to fetch ${href}`);
-                    return r.text();
-                });
-            if (!cssText) return false;
-            const cleaned = cleanCSS(cssText);
-            injectStyle(cleaned);
-            return true;
-        } catch (e) {
-            console.warn(`❌ Could not fetch stylesheet at ${href}`, e);
+            const sheetOrigin = new URL(href, location.href).origin;
+            const pageOrigin = location.origin;
+            return (
+                sheetOrigin === pageOrigin ||
+                (link &&
+                    (link.crossOrigin === "anonymous" || link.crossOrigin === ""))
+            );
+        } catch (_) {
             return false;
         }
     }
@@ -185,56 +348,56 @@
     async function processStyleSheets() {
         const seen = new WeakSet();
         const links = Array.from(document.querySelectorAll('link[rel="stylesheet"]'));
+        let injected = 0;
 
         for (const sheet of document.styleSheets) {
             if (seen.has(sheet)) continue;
             seen.add(sheet);
 
             if (sheet.href) {
-                const link = links.find(l => l.href === sheet.href);
-                if (!link) continue;
+                const normalizedHref = normalizeStylesheetHref(sheet.href);
+                const link = links.find((l) => {
+                    try {
+                        return (
+                            normalizeStylesheetHref(l.href) === normalizedHref
+                        );
+                    } catch (_) {
+                        return l.href === sheet.href;
+                    }
+                });
 
-                // Try to process all stylesheets using direct cssRules access first
                 const cssText = getStyleSheetText(sheet);
-                if (cssText) {
-                    const signature = `${sheet.href}::${cssText.length}`;
-                    if (processedSheetSignatures.get(sheet.href) === signature) {
-                        continue;
-                    }
-                    const cleaned = cleanCSS(cssText);
-                    if (cleaned.trim()) {
-                        injectStyle(cleaned);
-                    }
-                    processedSheetSignatures.set(sheet.href, signature);
-                    continue;
-                }
 
-                // Fallback: only attempt fetch for same-origin or CORS-enabled stylesheets
-                const sheetOrigin = new URL(sheet.href, location.href).origin;
-                const pageOrigin = location.origin;
-
-                if (sheetOrigin === pageOrigin ||
-                    link.crossOrigin === 'anonymous' ||
-                    link.crossOrigin === '') {
-                    await fetchAndInlineStylesheet(sheet.href, null);
+                if (canFetchStylesheetHref(normalizedHref, link)) {
+                    const signature = `${normalizedHref}::fetch`;
+                    if (processedSheetSignatures.get(normalizedHref) !== signature) {
+                        if (await fetchAndInlineStylesheet(normalizedHref, sheet)) {
+                            injected++;
+                        }
+                        processedSheetSignatures.set(normalizedHref, signature);
+                    }
+                } else if (cssText && /@layer/i.test(cssText)) {
+                    const signature = `${normalizedHref}::${cssText.length}`;
+                    if (processedSheetSignatures.get(normalizedHref) !== signature) {
+                        if (processLayeredCSS(cssText, normalizedHref)) {
+                            injected++;
+                        }
+                        processedSheetSignatures.set(normalizedHref, signature);
+                    }
+                } else if (link) {
+                    dbg("Skipping cross-origin stylesheet without CORS:", normalizedHref);
                 }
             } else if (
                 sheet.ownerNode &&
-                sheet.ownerNode.tagName === 'STYLE' &&
-                !sheet.ownerNode.hasAttribute('data-css-layers-polyfill') &&
-                sheet.ownerNode.textContent.includes('@layer') &&
-                !sheet.ownerNode.id?.startsWith('skip-polyfill-')
+                sheet.ownerNode.tagName === "STYLE"
             ) {
-                const original = sheet.ownerNode.textContent;
-                const inlineId = sheet.ownerNode.id || hashString(original);
-                const signature = `inline::${inlineId}::${original.length}`;
-                if (processedSheetSignatures.get(inlineId) === signature) {
-                    continue;
-                }
-                const cleaned = cleanCSS(original);
-                injectStyle(cleaned);
-                processedSheetSignatures.set(inlineId, signature);
+                processInlineStyleNode(sheet.ownerNode);
             }
+        }
+
+        document.querySelectorAll("style").forEach(processInlineStyleNode);
+        if (injected) {
+            dbg("Flattened @layer rules from", injected, "stylesheet(s)");
         }
     }
 
@@ -249,12 +412,7 @@
                         if (node.nodeType === Node.ELEMENT_NODE) {
                             // Check for new style elements
                             if (node.tagName === 'STYLE') {
-                                if (node.textContent.includes('@layer') &&
-                                    !node.hasAttribute('data-css-layers-polyfill') &&
-                                    !node.id?.startsWith('skip-polyfill-')) {
-                                    const cleaned = cleanCSS(node.textContent);
-                                    injectStyle(cleaned);
-                                }
+                                processInlineStyleNode(node);
                             }
                             // Check for new link elements with stylesheets
                             else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
@@ -267,12 +425,7 @@
 
                                 if (styleNodes) {
                                     for (const styleNode of styleNodes) {
-                                        if (styleNode.textContent.includes('@layer') &&
-                                            !styleNode.hasAttribute('data-css-layers-polyfill') &&
-                                            !styleNode.id?.startsWith('skip-polyfill-')) {
-                                            const cleaned = cleanCSS(styleNode.textContent);
-                                            injectStyle(cleaned);
-                                        }
+                                        processInlineStyleNode(styleNode);
                                     }
                                 }
 
@@ -315,8 +468,37 @@
         }
     }
 
-    // Initial processing
-    processStyleSheets();
+    let rescanScheduled = 0;
+    const MAX_RESCAN_PASSES = 2;
+
+    function scheduleRescan(delay) {
+        if (rescanScheduled >= MAX_RESCAN_PASSES) return;
+        rescanScheduled++;
+        setTimeout(function () {
+            processStyleSheets().finally(function () {
+                if (rescanScheduled < MAX_RESCAN_PASSES) {
+                    scheduleRescan(delay * 2);
+                }
+            });
+        }, delay);
+    }
+
+    // Initial processing — defer one tick so prefix polyfills register patch hooks.
+    dbg("CSS @layer polyfill starting");
+    setTimeout(function () {
+        processStyleSheets().finally(function () {
+            scheduleRescan(1000);
+        });
+    }, 0);
+    if (document.readyState !== "complete") {
+        window.addEventListener("load", () => processStyleSheets(), { once: true });
+    }
+
+    if (window.__pfOnCssLayersUpdate) {
+        window.__pfOnCssLayersUpdate(function () {
+            processStyleSheets();
+        });
+    }
 
     // Register listener for dynamic content
     setupMutationListener();

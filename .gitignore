@@ -2,6 +2,8 @@
 packages/
 .DS_Store
 node_modules/
-.build-cache
+.build-cache*
+.build-artifacts*
+.build-stamp
 experimental/
 *.disabled

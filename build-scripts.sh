@@ -21,9 +21,32 @@ SOURCE_SCRIPTS="$SCRIPT_DIR/scripts"
 SOURCE_SCRIPTS_PRIORITY="$SCRIPT_DIR/scripts-priority"
 SOURCE_SCRIPTS_POST="$SCRIPT_DIR/scripts-post"
 TARGET_BASE="$SCRIPT_DIR/layout/Library/Application Support/Polyfills"
-CACHE_FILE="$SCRIPT_DIR/.build-cache"
+CACHE_FILE="$SCRIPT_DIR/.build-cache-${DEBUG:-0}"
+ARTIFACT_DIR="$SCRIPT_DIR/.build-artifacts-${DEBUG:-0}"
+BUILD_STAMP="$SCRIPT_DIR/.build-stamp"
+CURRENT_BUILD_STAMP="DEBUG=${DEBUG:-0}"
 
 echo "Building and optimizing polyfill scripts..."
+
+mkdir -p "$ARTIFACT_DIR"
+
+# layout/ is shared; per-mode built outputs live in .build-artifacts-0 / .build-artifacts-1.
+if [ -f "$BUILD_STAMP" ]; then
+    CACHED_BUILD_STAMP="$(cat "$BUILD_STAMP")"
+    if [ "$CACHED_BUILD_STAMP" != "$CURRENT_BUILD_STAMP" ]; then
+        echo "Build mode changed ($CACHED_BUILD_STAMP -> $CURRENT_BUILD_STAMP), using artifact cache for this mode"
+    fi
+fi
+echo "$CURRENT_BUILD_STAMP" >"$BUILD_STAMP"
+
+# Set UglifyJS options based on DEBUG environment variable
+if [ "$DEBUG" = "1" ]; then
+    UGLIFY_COMPRESS="global_defs={DEBUG:true}"
+    echo "Debug build: keeping debug logs"
+else
+    UGLIFY_COMPRESS="drop_console=true,global_defs={DEBUG:false}"
+    echo "Release build: stripping debug logs"
+fi
 
 # Function to get file checksum for change detection
 get_file_checksum() {
@@ -33,6 +56,56 @@ get_file_checksum() {
     else
         echo ""
     fi
+}
+
+# Flip `var __*_DEBUG__ = false` to true after Babel. Uglify global_defs cannot
+# override locally-declared DEBUG constants. Polyfills gate logs with __PF_DEBUG__.
+apply_debug_flags() {
+    local file="$1"
+    if [ "$DEBUG" != "1" ] || [ ! -f "$file" ]; then
+        return 0
+    fi
+    if ! grep -qE 'var __[A-Z0-9_]+_DEBUG__' "$file"; then
+        return 0
+    fi
+    local tmp="${file}.debugpatch"
+    sed -E \
+        -e 's/(var __[A-Z0-9_]+_DEBUG__ = )false/\1true/g' \
+        -e 's/(var __[A-Z0-9_]+_DEBUG__)=!1/\1=!0/g' \
+        "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
+# Cache entries track source checksums per mode (.build-cache-0 / .build-cache-1).
+# Built JS artifacts are stored separately in .build-artifacts-0 / .build-artifacts-1.
+cache_key_for_source() {
+    local source_file="$1"
+    get_file_checksum "$source_file"
+}
+
+artifact_path_for_target() {
+    local target_file="$1"
+    local relative_path="${target_file#$TARGET_BASE/}"
+    echo "$ARTIFACT_DIR/$relative_path"
+}
+
+save_artifact() {
+    local target_file="$1"
+    local artifact_file
+    artifact_file=$(artifact_path_for_target "$target_file")
+    mkdir -p "$(dirname "$artifact_file")"
+    cp "$target_file" "$artifact_file"
+}
+
+restore_artifact() {
+    local target_file="$1"
+    local artifact_file
+    artifact_file=$(artifact_path_for_target "$target_file")
+    if [ ! -f "$artifact_file" ]; then
+        return 1
+    fi
+    mkdir -p "$(dirname "$target_file")"
+    cp "$artifact_file" "$target_file"
+    return 0
 }
 
 # Function to check if file has changed since last build
@@ -52,39 +125,51 @@ file_has_changed() {
 
     # Get current checksum
     local current_checksum
-    current_checksum=$(get_file_checksum "$source_file")
+    current_checksum=$(cache_key_for_source "$source_file")
 
     # Get cached checksum
     local cached_checksum=""
     if [ -f "$CACHE_FILE" ]; then
-        cached_checksum=$(grep "^$source_file:" "$CACHE_FILE" 2>/dev/null | cut -d':' -f2)
+        cached_checksum=$(grep "^$source_file:" "$CACHE_FILE" | cut -d':' -f2-)
     fi
 
     # Compare checksums
     if [ "$current_checksum" != "$cached_checksum" ]; then
         return 0 # File has changed
-    else
-        return 1 # File unchanged
     fi
+
+    # Source unchanged for this mode — reuse saved artifact when available.
+    local artifact_file
+    artifact_file=$(artifact_path_for_target "$target_file")
+    if [ ! -f "$artifact_file" ]; then
+        return 0
+    fi
+
+    return 1 # File unchanged
 }
 
-# Function to update cache with file checksum
+# Function to update cache with file checksum and persist built output for this mode
 update_cache() {
     local source_file="$1"
+    local target_file="${2:-}"
     local checksum
-    checksum=$(get_file_checksum "$source_file")
+    checksum=$(cache_key_for_source "$source_file")
 
     # Create cache file if it doesn't exist
     touch "$CACHE_FILE"
 
     # Remove old entry if exists
     if [ -f "$CACHE_FILE" ]; then
-        grep -v "^$source_file:" "$CACHE_FILE" >"$CACHE_FILE.tmp" 2>/dev/null || true
+        grep -v "^$source_file:" "$CACHE_FILE" >"$CACHE_FILE.tmp" || true
         mv "$CACHE_FILE.tmp" "$CACHE_FILE"
     fi
 
     # Add new entry
     echo "$source_file:$checksum" >>"$CACHE_FILE"
+
+    if [ -n "$target_file" ] && [ -f "$target_file" ]; then
+        save_artifact "$target_file"
+    fi
 }
 
 # Function to clean up orphaned files (files that exist in target but not in source)
@@ -118,16 +203,21 @@ cleanup_orphaned_files() {
             echo "  🗑 Removing orphaned file: $relative_path"
             rm -f "$target_file"
 
-            # Also remove from cache if present
+            # Also remove from cache and artifact store if present
             if [ -f "$CACHE_FILE" ]; then
-                grep -v "^$source_file:" "$CACHE_FILE" >"$CACHE_FILE.tmp" 2>/dev/null || true
+                grep -v "^$source_file:" "$CACHE_FILE" >"$CACHE_FILE.tmp" || true
                 mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+            fi
+            if [ -n "$source_file" ]; then
+                local artifact_file
+                artifact_file=$(artifact_path_for_target "$target_file")
+                rm -f "$artifact_file"
             fi
         fi
     done
 
     # Remove empty directories
-    find "$target_dir" -type d -empty -delete 2>/dev/null || true
+    find "$target_dir" -type d -empty -delete || true
 }
 
 # Function to copy file only if it doesn't exist in target or has changed
@@ -214,7 +304,7 @@ copy_directory_structure() {
     done
 
     # Remove disabled files
-    find "$target_dir" -name "*.disabled" -delete 2>/dev/null || true
+    find "$target_dir" -name "*.disabled" -delete || true
 }
 process_js_folder() {
     local folder_path="$1"
@@ -283,39 +373,53 @@ process_js_folder() {
             skip_transform=1
         fi
 
-        # Check if file has changed (still copy if changed even when skipping transforms)
+        # Check if file has changed (restore cached artifact when unchanged)
         if [ -n "$source_file" ] && ! file_has_changed "$source_file" "$js_file"; then
-            echo "  ↻ Unchanged: $filename (skipped)"
+            if restore_artifact "$js_file"; then
+                echo "  ↻ Restored: $filename (artifact cache)"
+            else
+                echo "  ↻ Unchanged: $filename (skipped)"
+            fi
             continue
         fi
 
         if [ "$skip_transform" -eq 1 ]; then
             if [ "$HAS_NPX" -eq 1 ]; then
-        # Prebuilt: transpile to iOS 8 using project config in PREBUILT mode, then minify
+                # Prebuilt: transpile to iOS 8 using project config in PREBUILT mode, then minify
                 local temp_js_transpiled
                 local temp_js_minified
                 temp_js_transpiled=$(mktemp)
                 temp_js_minified=$(mktemp)
 
-        if BABEL_ENV=prebuilt npx babel "$js_file" -o "$temp_js_transpiled" 2>/dev/null; then
-                    if npx uglifyjs "$temp_js_transpiled" -c -m -o "$temp_js_minified" 2>/dev/null; then
+                local UGLIFY_ARGS
+                UGLIFY_ARGS=(--mangle -o "$temp_js_minified")
+                if [ "$filename" != "A_start.js" ]; then
+                    UGLIFY_ARGS=(--compress "$UGLIFY_COMPRESS" "${UGLIFY_ARGS[@]}")
+                fi
+
+                trap 'rm -f "$temp_js_transpiled" "$temp_js_minified"; trap - RETURN EXIT INT TERM' RETURN EXIT INT TERM
+
+                if BABEL_ENV=prebuilt npx babel "$js_file" -o "$temp_js_transpiled"; then
+                    apply_debug_flags "$temp_js_transpiled"
+                    if npx uglifyjs "$temp_js_transpiled" "${UGLIFY_ARGS[@]}"; then
                         cp "$temp_js_minified" "$js_file"
-            echo "  ✓ ES5 + minified: $filename (prebuilt iOS8)"
+                        echo "  ✓ ES5 + minified: $filename (prebuilt iOS8)"
                     else
                         cp "$temp_js_transpiled" "$js_file"
                         echo "  ⚠ ES5 only: $filename (uglify failed)"
                     fi
-        elif npx babel "$js_file" --no-babelrc --plugins @babel/plugin-transform-arrow-functions -o "$temp_js_transpiled" 2>/dev/null; then
-                    if npx uglifyjs "$temp_js_transpiled" -c -m -o "$temp_js_minified" 2>/dev/null; then
+                elif npx babel "$js_file" --no-babelrc --plugins @babel/plugin-transform-arrow-functions -o "$temp_js_transpiled"; then
+                    apply_debug_flags "$temp_js_transpiled"
+                    if npx uglifyjs "$temp_js_transpiled" "${UGLIFY_ARGS[@]}"; then
                         cp "$temp_js_minified" "$js_file"
-            echo "  ✓ ES5 + minified: $filename (prebuilt, arrows->functions)"
+                        echo "  ✓ ES5 + minified: $filename (prebuilt, arrows->functions)"
                     else
                         cp "$temp_js_transpiled" "$js_file"
                         echo "  ⚠ ES5 only: $filename (uglify failed)"
                     fi
                 else
                     # Fallback: minify only
-                    if npx uglifyjs "$js_file" -c -m -o "$temp_js_minified" 2>/dev/null; then
+                    if npx uglifyjs "$js_file" "${UGLIFY_ARGS[@]}"; then
                         cp "$temp_js_minified" "$js_file"
                         echo "  ✓ Minified only: $filename (prebuilt, no babel plugins)"
                     else
@@ -324,14 +428,19 @@ process_js_folder() {
                 fi
                 # Update cache if we have source file
                 if [ -n "$source_file" ]; then
-                    update_cache "$source_file"
+                    update_cache "$source_file" "$js_file"
                 fi
             else
                 # No npx, leave file as-is but update cache
                 echo "  ⤴ Skipped transforms: $filename (prebuilt, no npx)"
                 if [ -n "$source_file" ]; then
-                    update_cache "$source_file"
+                    update_cache "$source_file" "$js_file"
                 fi
+            fi
+        elif [ "$HAS_NPX" -eq 0 ]; then
+            echo "  ⤴ Skipped transforms: $filename (no npx)"
+            if [ -n "$source_file" ]; then
+                update_cache "$source_file" "$js_file"
             fi
         else
             local temp_js_transpiled
@@ -340,19 +449,26 @@ process_js_folder() {
             temp_js_transpiled=$(mktemp)
             temp_js_minified=$(mktemp)
 
+            local UGLIFY_ARGS
+            UGLIFY_ARGS=(--mangle -o "$temp_js_minified")
+            if [ "$filename" != "A_start.js" ]; then
+                UGLIFY_ARGS=(--compress "$UGLIFY_COMPRESS" "${UGLIFY_ARGS[@]}")
+            fi
+
             # Local trap for temp files
             trap 'rm -f "$temp_js_transpiled" "$temp_js_minified"; trap - RETURN EXIT INT TERM' RETURN EXIT INT TERM
 
             # Transpile with Babel
-            if npx babel "$js_file" -o "$temp_js_transpiled" 2>/dev/null; then
+            if npx babel "$js_file" -o "$temp_js_transpiled"; then
+                apply_debug_flags "$temp_js_transpiled"
                 # Minify with UglifyJS
-                if npx uglifyjs "$temp_js_transpiled" -o "$temp_js_minified" 2>/dev/null; then
+                if npx uglifyjs "$temp_js_transpiled" "${UGLIFY_ARGS[@]}"; then
                     cp "$temp_js_minified" "$js_file"
                     echo "  ✓ Processed: $filename (transpiled + minified)"
 
                     # Update cache if we have source file
                     if [ -n "$source_file" ]; then
-                        update_cache "$source_file"
+                        update_cache "$source_file" "$js_file"
                     fi
                 else
                     # Minification failed, use transpiled version
@@ -361,12 +477,12 @@ process_js_folder() {
 
                     # Update cache if we have source file
                     if [ -n "$source_file" ]; then
-                        update_cache "$source_file"
+                        update_cache "$source_file" "$js_file"
                     fi
                 fi
             else
-                # Transpilation failed, keep original
                 echo "  ✗ Skipped: $filename (transpilation failed)"
+                echo "1" >> "$BABEL_FAILURES_FILE"
             fi
 
             # Cleanup handled by trap
@@ -378,6 +494,8 @@ process_js_folder() {
 }
 
 # Create target directories
+BABEL_FAILURES_FILE="${TARGET_BASE}/.babel-failures"
+: > "$BABEL_FAILURES_FILE"
 mkdir -p "$TARGET_BASE/scripts"
 mkdir -p "$TARGET_BASE/scripts-post"
 mkdir -p "$TARGET_BASE/scripts-priority"
@@ -424,3 +542,11 @@ else
 fi
 echo "Optimized structure created at: $TARGET_BASE"
 echo "Build cache stored at: $CACHE_FILE"
+echo "Artifact cache stored at: $ARTIFACT_DIR"
+
+if [ -s "$BABEL_FAILURES_FILE" ]; then
+    rm -f "$BABEL_FAILURES_FILE"
+    echo "Build failed: one or more JavaScript files could not be transpiled."
+    exit 1
+fi
+rm -f "$BABEL_FAILURES_FILE"

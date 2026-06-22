@@ -1,1 +1,1 @@
-"use strict";if(!("trimStart"in String.prototype))String.prototype.trimStart=String.prototype.trimLeft;if(!("trimEnd"in String.prototype))String.prototype.trimEnd=String.prototype.trimRight;
+"trimStart"in String.prototype||(String.prototype.trimStart=String.prototype.trimLeft),"trimEnd"in String.prototype||(String.prototype.trimEnd=String.prototype.trimRight);

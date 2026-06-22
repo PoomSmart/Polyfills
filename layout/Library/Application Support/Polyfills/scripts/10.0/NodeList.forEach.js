@@ -1,1 +1,1 @@
-"use strict";if(!("forEach"in NodeList.prototype))NodeList.prototype.forEach=[].forEach;
+"forEach"in NodeList.prototype||(NodeList.prototype.forEach=[].forEach);

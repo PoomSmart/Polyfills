@@ -167,18 +167,25 @@ NS_AVAILABLE_IOS(11.0)
             return; // Task was cancelled
         }
 
-        if (error) {
-            if (error.code != NSURLErrorCancelled) {
-                [urlSchemeTask didFailWithError:error];
+        void (^deliver)(void) = ^{
+            if (error) {
+                if (error.code != NSURLErrorCancelled) {
+                    [urlSchemeTask didFailWithError:error];
+                }
+            } else {
+                if (response) [urlSchemeTask didReceiveResponse:response];
+                if (data) [urlSchemeTask didReceiveData:data];
+                [urlSchemeTask didFinish];
             }
+        };
+        if ([NSThread isMainThread]) {
+            deliver();
         } else {
-            if (response) [urlSchemeTask didReceiveResponse:response];
-            if (data) [urlSchemeTask didReceiveData:data];
-            [urlSchemeTask didFinish];
+            dispatch_async(dispatch_get_main_queue(), deliver);
         }
     }];
 
-    dispatch_async(_taskQueue, ^{
+    dispatch_sync(_taskQueue, ^{
         [self->_taskMap setObject:dataTask forKey:urlSchemeTask];
     });
     [dataTask resume];

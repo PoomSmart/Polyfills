@@ -1,1 +1,1 @@
-"use strict";if(!("hasOwn"in Object)){Object.hasOwn=function(obj,prop){return Object.prototype.hasOwnProperty.call(obj,prop)}}
+"hasOwn"in Object||(Object.hasOwn=function(t,n){return Object.prototype.hasOwnProperty.call(t,n)});

@@ -525,6 +525,36 @@
         injectedIds.add(id);
     }
 
+    function normalizeStylesheetHref(href) {
+        try {
+            return new URL(href, location.href).href;
+        } catch (_) {
+            return href;
+        }
+    }
+
+    function fetchStylesheetText(href) {
+        const normalizedHref = normalizeStylesheetHref(href);
+        const cache = window.__pfFetchCache;
+        if (cache && !cache.has(normalizedHref)) {
+            cache.set(
+                normalizedHref,
+                fetch(normalizedHref, { mode: "cors" })
+                    .then((r) => (r.ok ? r.text() : Promise.reject()))
+                    .catch(() => {
+                        cache.delete(normalizedHref);
+                        return null;
+                    })
+            );
+        }
+        if (cache) {
+            return cache.get(normalizedHref);
+        }
+        return fetch(normalizedHref, { mode: "cors" })
+            .then((r) => (r.ok ? r.text() : Promise.reject()))
+            .catch(() => null);
+    }
+
     function getStyleSheetText(sheet) {
         try {
             const rules = Array.from(sheet.cssRules || sheet.rules || []);
@@ -550,22 +580,12 @@
             processedSheetSignatures.set(sheetKey, signature);
             return;
         }
-        // If we couldn't get text (cross-origin) we attempt fetch if same-origin
+        // If cssRules are blocked or range syntax was stripped from CSSOM, fetch source CSS.
         if (sheet.href) {
             try {
-                const url = new URL(sheet.href, location.href);
-                if (url.origin === location.origin) {
-                    // Use shared fetch cache to avoid duplicate requests across polyfills
-                    const cache = window.__pfFetchCache;
-                    if (cache && !cache.has(url.href)) {
-                        cache.set(url.href, fetch(url.href, { mode: 'cors' })
-                            .then(r => r.ok ? r.text() : Promise.reject())
-                            .catch(() => null)
-                        );
-                    }
-                    const css = cache
-                        ? await cache.get(url.href)
-                        : await fetch(url.href, { mode: 'cors' }).then(r => r.ok ? r.text() : Promise.reject());
+                const normalizedHref = normalizeStylesheetHref(sheet.href);
+                if (new URL(normalizedHref).origin === location.origin) {
+                    const css = await fetchStylesheetText(normalizedHref);
                     if (css && /@media\s+[^\{]*[<>]=?/.test(css)) {
                         const transformed = transformCSS(css);
                         if (transformed !== css) injectStyle(transformed);
@@ -667,5 +687,9 @@
     }
 
     processAll();
+    if (document.readyState !== "complete") {
+        window.addEventListener("load", () => processAll(), { once: true });
+    }
+    setTimeout(() => processAll(), 1000);
     setupObserver();
 })();

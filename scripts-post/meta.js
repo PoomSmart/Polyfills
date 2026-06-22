@@ -7,8 +7,8 @@
         for (var i = 0; i < parts.length; ++i) {
             var part = parts[i].trim();
             var pair = part.split("=");
-            if (pair[0] === "min-width") {
-                var minWidth = parseInt(pair[1]);
+            if (pair[0].trim() === "min-width") {
+                var minWidth = parseInt(pair[1].trim(), 10);
                 if (screen.width < minWidth) {
                     document.head.removeChild(viewport);
 
