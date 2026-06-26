@@ -41,10 +41,10 @@ echo "$CURRENT_BUILD_STAMP" >"$BUILD_STAMP"
 
 # Set UglifyJS options based on DEBUG environment variable
 if [ "$DEBUG" = "1" ]; then
-    UGLIFY_COMPRESS="global_defs={DEBUG:true}"
+    UGLIFY_COMPRESS="arrows=false,global_defs={DEBUG:true}"
     echo "Debug build: keeping debug logs"
 else
-    UGLIFY_COMPRESS="drop_console=true,global_defs={DEBUG:false}"
+    UGLIFY_COMPRESS="arrows=false,drop_console=true,global_defs={DEBUG:false}"
     echo "Release build: stripping debug logs"
 fi
 
