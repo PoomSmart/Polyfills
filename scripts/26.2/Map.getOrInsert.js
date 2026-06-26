@@ -17,8 +17,8 @@ if (typeof Map !== 'undefined') {
     });
 
     defineMapMethod('getOrInsertComputed', function (key, callback) {
-        if (this.has(key)) return this.get(key);
         if (typeof callback !== 'function') throw new TypeError('Expected a function');
+        if (this.has(key)) return this.get(key);
 
         const value = callback(key);
         this.set(key, value);
