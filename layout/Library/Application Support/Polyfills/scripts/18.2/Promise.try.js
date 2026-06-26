@@ -1,0 +1,1 @@
+"try"in Promise||Object.defineProperty(Promise,"try",{value:function(t){var i=Array.prototype.slice.call(arguments,1);return new this(function(r,e){try{r(t.apply(void 0,i))}catch(r){e(r)}})},writable:!0,configurable:!0});
