@@ -1,11 +1,11 @@
 Package: com.ps.polyfills
 Name: Polyfills
-Version: 2.25.0
+Version: 2.26.0
 Architecture: iphoneos-arm
 Description: Injects JavaScript Polyfills to iOS web views.
 Maintainer: PoomSmart
 Author: PoomSmart
 Section: Tweaks
-Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 8.0), preferenceloader, com.ps.polyfillsregexp, com.ps.customsecheaders | firmware (>= 16.4)
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 8.0), preferenceloader, com.ps.polyfillsregexp (>= 1.3.1), com.ps.customsecheaders | firmware (>= 16.4)
 Depiction: https://poomsmart.github.io/repo/depictions/polyfills.html
 SileoDepiction: https://poomsmart.github.io/repo/sileodepictions/polyfills.json
