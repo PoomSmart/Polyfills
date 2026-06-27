@@ -1,1 +1,140 @@
-"use strict";function _createForOfIteratorHelper(r,e){var t="undefined"!=typeof Symbol&&r[Symbol.iterator]||r["@@iterator"];if(!t){if(Array.isArray(r)||(t=_unsupportedIterableToArray(r))||e&&r&&"number"==typeof r.length){t&&(r=t);var _n=0,F=function F(){};return{s:F,n:function n(){return _n>=r.length?{done:!0}:{done:!1,value:r[_n++]}},e:function e(r){throw r},f:F}}throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")}var o,a=!0,u=!1;return{s:function s(){t=t.call(r)},n:function n(){var r=t.next();return a=r.done,r},e:function e(r){u=!0,o=r},f:function f(){try{a||null==t.return||t.return()}finally{if(u)throw o}}}}function _unsupportedIterableToArray(r,a){if(r){if("string"==typeof r)return _arrayLikeToArray(r,a);var t={}.toString.call(r).slice(8,-1);return"Object"===t&&r.constructor&&(t=r.constructor.name),"Map"===t||"Set"===t?Array.from(r):"Arguments"===t||/^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t)?_arrayLikeToArray(r,a):void 0}}function _arrayLikeToArray(r,a){(null==a||a>r.length)&&(a=r.length);for(var e=0,n=Array(a);e<a;e++)n[e]=r[e];return n}(function(){var root=typeof globalThis!=="undefined"&&globalThis||typeof self!=="undefined"&&self||typeof global!=="undefined"&&global;var shouldPolyfillEvent=function(){try{new root.Event("")}catch(error){return true}return false}();var shouldPolyfillEventTarget=function(){try{new root.EventTarget}catch(error){return true}return false}();if(shouldPolyfillEvent){root.Event=function(){function Event(type,options){this.bubbles=!!options&&!!options.bubbles;this.cancelable=!!options&&!!options.cancelable;this.composed=!!options&&!!options.composed;this.type=type}return Event}()}if(shouldPolyfillEventTarget){root.EventTarget=function(){function EventTarget(){this.__listeners=new Map}EventTarget.prototype=Object.create(Object.prototype);EventTarget.prototype.addEventListener=function(type,listener,options){if(arguments.length<2){throw new TypeError("TypeError: Failed to execute 'addEventListener' on 'EventTarget': 2 arguments required, but only "+arguments.length+" present.")}var __listeners=this.__listeners;var actualType=type.toString();if(!__listeners.has(actualType)){__listeners.set(actualType,new Map)}var listenersForType=__listeners.get(actualType);if(!listenersForType.has(listener)){listenersForType.set(listener,options)}};EventTarget.prototype.removeEventListener=function(type,listener,_options){if(arguments.length<2){throw new TypeError("TypeError: Failed to execute 'addEventListener' on 'EventTarget': 2 arguments required, but only "+arguments.length+" present.")}var __listeners=this.__listeners;var actualType=type.toString();if(__listeners.has(actualType)){var listenersForType=__listeners.get(actualType);if(listenersForType.has(listener)){listenersForType.delete(listener)}}};EventTarget.prototype.dispatchEvent=function(event){var _this=this;if(!(event instanceof Event)){throw new TypeError("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")}var type=event.type;var __listeners=this.__listeners;var listenersForType=__listeners.get(type);if(listenersForType){var _iterator=_createForOfIteratorHelper(listenersForType.entries()),_step;try{var _loop=function _loop(){listnerEntry=_step.value;var listener=listnerEntry[0];var options=listnerEntry[1];try{if(typeof listener==="function"){listener.call(_this,event)}else if(listener&&typeof listener.handleEvent==="function"){listener.handleEvent(event)}}catch(err){setTimeout(function(){throw err})}if(options&&options.once){listenersForType.delete(listener)}},listnerEntry;for(_iterator.s();!(_step=_iterator.n()).done;){_loop()}}catch(err){_iterator.e(err)}finally{_iterator.f()}}return true};return EventTarget}()}})();
+const root =
+  (typeof globalThis !== "undefined" && globalThis) ||
+  (typeof self !== "undefined" && self) ||
+  (typeof global !== "undefined" && global);
+
+const shouldPolyfillEvent = (function() {
+  try {
+    new root.Event("");
+  } catch (error) {
+    return true;
+  }
+  return false;
+})();
+
+const shouldPolyfillEventTarget = (function() {
+  try {
+    new root.EventTarget();
+  } catch (error) {
+    return true;
+  }
+  return false;
+})();
+
+if (shouldPolyfillEvent) {
+  root.Event = (function () {
+    function Event(type, options) {
+        this.bubbles = !!options && !!options.bubbles;
+        this.cancelable = !!options && !!options.cancelable;
+        this.composed = !!options && !!options.composed;
+      this.type = type;
+    }
+
+    return Event;
+  })();
+}
+
+if (shouldPolyfillEventTarget) {
+  root.EventTarget = (function () {
+    function ensureListeners(target) {
+      if (!target.__listeners) {
+        target.__listeners = new Map();
+      }
+      return target.__listeners;
+    }
+
+    function EventTarget() {
+      ensureListeners(this);
+    }
+
+    EventTarget.prototype = Object.create(Object.prototype);
+
+    EventTarget.prototype.addEventListener = function (
+      type,
+      listener,
+      options
+    ) {
+      if (arguments.length < 2) {
+        throw new TypeError(
+          "TypeError: Failed to execute 'addEventListener' on 'EventTarget': 2 arguments required, but only " + arguments.length + " present."
+        );
+      }
+      const __listeners = ensureListeners(this);
+      const actualType = type.toString();
+      if (!__listeners.has(actualType)) {
+        __listeners.set(actualType, new Map());
+      }
+      const listenersForType = __listeners.get(actualType);
+      if (!listenersForType.has(listener)) {
+        // Any given listener is only registered once
+        listenersForType.set(listener, options);
+      }
+    };
+
+    EventTarget.prototype.removeEventListener = function (
+      type,
+      listener,
+      _options
+    ) {
+      if (arguments.length < 2) {
+        throw new TypeError(
+          "TypeError: Failed to execute 'addEventListener' on 'EventTarget': 2 arguments required, but only " + arguments.length + " present."
+        );
+      }
+      const __listeners = ensureListeners(this);
+      const actualType = type.toString();
+      if (__listeners.has(actualType)) {
+        const listenersForType = __listeners.get(actualType);
+        if (listenersForType.has(listener)) {
+          listenersForType.delete(listener);
+        }
+      }
+    };
+
+    EventTarget.prototype.dispatchEvent = function (event) {
+      if (!(event instanceof Event)) {
+        throw new TypeError(
+          "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'."
+        );
+      }
+      const type = event.type;
+      const __listeners = ensureListeners(this);
+      const listenersForType = __listeners.get(type);
+      if (listenersForType) {
+        for (var listnerEntry of listenersForType.entries()) {
+          const listener = listnerEntry[0];
+          const options = listnerEntry[1];
+
+          try {
+            if (typeof listener === "function") {
+              // Listener functions must be executed with the EventTarget as the `this` context.
+              listener.call(this, event);
+            } else if (listener && typeof listener.handleEvent === "function") {
+              // Listener objects have their handleEvent method called, if they have one
+              listener.handleEvent(event);
+            }
+          } catch (err) {
+            // We need to report the error to the global error handling event,
+            // but we do not want to break the loop that is executing the events.
+            // Unfortunately, this is the best we can do, which isn't great, because the
+            // native EventTarget will actually do this synchronously before moving to the next
+            // event in the loop.
+            setTimeout(() => {
+              throw err;
+            });
+          }
+          if (options && options.once) {
+            // If this was registered with { once: true }, we need
+            // to remove it now.
+            listenersForType.delete(listener);
+          }
+        }
+      }
+      // Since there are no cancellable events on a base EventTarget,
+      // this should always return true.
+      return true;
+    };
+
+    return EventTarget;
+  })();
+}

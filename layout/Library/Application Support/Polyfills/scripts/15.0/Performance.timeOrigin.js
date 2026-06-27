@@ -1,0 +1,1 @@
+!window.performance||"timeOrigin"in window.performance||Object.defineProperty(window.performance,"timeOrigin",{get:function(){return window.performance.timing&&window.performance.timing.navigationStart?window.performance.timing.navigationStart:Date.now()-(window.performance.now?window.performance.now():0)},enumerable:!0,configurable:!0});
