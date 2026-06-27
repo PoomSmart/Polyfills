@@ -1,15 +1,5 @@
-// Polyfill for Float16Array
-if (typeof Float16Array === "undefined") {
-    /**
-     * Minified by jsDelivr using Terser v5.37.0.
-     * Original file: /npm/@petamoriken/float16@3.9.2/browser/float16.js
-     *
-     * Do NOT use SRI with dynamically generated files! More information: https://www.jsdelivr.com/using-sri-with-dynamic-files
-     */
-    /*! @petamoriken/float16 v3.9.2 | MIT License - https://github.com/petamoriken/float16 */
-    var float16=function(t){"use strict";const n="This constructor is not a subclass of Float16Array",r="The constructor property value is not an object",e="Attempting to access detached ArrayBuffer",o="Cannot convert undefined or null to object",i="Cannot mix BigInt and other types, use explicit conversions",s="@@iterator property is not callable",u="Reduce of empty array with no initial value",c="Offset is out of bounds";function f(t){return(n,...r)=>l(t,n,r)}function h(t,n){return f(p(t,n).get)}const{apply:l,construct:a,defineProperty:w,get:y,getOwnPropertyDescriptor:p,getPrototypeOf:d,has:g,ownKeys:v,set:b,setPrototypeOf:A}=Reflect,_=Proxy,{EPSILON:E,MAX_SAFE_INTEGER:T,isFinite:x,isNaN:S}=Number,{iterator:m,species:O,toStringTag:P,for:j}=Symbol,F=Object,{create:B,defineProperty:L,freeze:R,is:I}=F,N=F.prototype,U=N.__lookupGetter__?f(N.__lookupGetter__):(t,n)=>{if(null==t)throw Bt(o);let r=F(t);do{const t=p(r,n);if(void 0!==t)return k(t,"get")?t.get:void 0}while(null!==(r=d(r)))},k=F.hasOwn||f(N.hasOwnProperty),M=Array,D=M.isArray,W=M.prototype,G=f(W.join),C=f(W.push),V=f(W.toLocaleString),Y=W[m],z=f(Y),{abs:K,trunc:X}=Math,q=ArrayBuffer,H=q.isView,J=q.prototype,Q=f(J.slice),Z=h(J,"byteLength"),$="undefined"!=typeof SharedArrayBuffer?SharedArrayBuffer:null,tt=$&&h($.prototype,"byteLength"),nt=d(Uint8Array),rt=nt.from,et=nt.prototype,ot=et[m],it=f(et.keys),st=f(et.values),ut=f(et.entries),ct=f(et.set),ft=f(et.reverse),ht=f(et.fill),lt=f(et.copyWithin),at=f(et.sort),wt=f(et.slice),yt=f(et.subarray),pt=h(et,"buffer"),dt=h(et,"byteOffset"),gt=h(et,"length"),vt=h(et,P),bt=Uint8Array,At=Uint16Array,_t=(...t)=>l(rt,At,t),Et=Uint32Array,Tt=Float32Array,xt=d([][m]()),St=f(xt.next),mt=f(function*(){}().next),Ot=d(xt),Pt=DataView.prototype,jt=f(Pt.getUint16),Ft=f(Pt.setUint16),Bt=TypeError,Lt=RangeError,Rt=WeakSet,It=Rt.prototype,Nt=f(It.add),Ut=f(It.has),kt=WeakMap,Mt=kt.prototype,Dt=f(Mt.get),Wt=f(Mt.has),Gt=f(Mt.set),Ct=new kt,Vt=B(null,{next:{value:function(){const t=Dt(Ct,this);return St(t)}},[m]:{value:function(){return this}}});function Yt(t){if(t[m]===Y&&xt.next===St)return t;const n=B(Vt);return Gt(Ct,n,z(t)),n}const zt=new kt,Kt=B(Ot,{next:{value:function(){const t=Dt(zt,this);return mt(t)},writable:!0,configurable:!0}});for(const t of v(xt))"next"!==t&&L(Kt,t,p(xt,t));function Xt(t){const n=B(Kt);return Gt(zt,n,t),n}function qt(t){return null!==t&&"object"==typeof t||"function"==typeof t}function Ht(t){return null!==t&&"object"==typeof t}function Jt(t){return void 0!==vt(t)}function Qt(t){const n=vt(t);return"BigInt64Array"===n||"BigUint64Array"===n}function Zt(t){if(null===$)return!1;try{return tt(t),!0}catch(t){return!1}}function $t(t){return function(t){try{return!D(t)&&(Z(t),!0)}catch(t){return!1}}(t)||Zt(t)}function tn(t){return!!D(t)&&(t[m]===Y&&xt.next===St)}function nn(t){if("string"!=typeof t)return!1;const n=+t;return t===n+""&&(!!x(n)&&n===X(n))}const rn=j("__Float16Array__");const en=1/E;const on=6103515625e-14,sn=.0009765625,un=5.960464477539063e-8,cn=sn*en;function fn(t){const n=+t;if(!x(n)||0===n)return n;const r=n>0?1:-1,e=K(n);if(e<on)return r*function(t){return t+en-en}(e/un)*un;const o=(1+cn)*e,i=o-(o-e);return i>65504||S(i)?r*(1/0):r*i}const hn=new q(4),ln=new Tt(hn),an=new Et(hn),wn=new At(512),yn=new bt(512);for(let t=0;t<256;++t){const n=t-127;n<-24?(wn[t]=0,wn[256|t]=32768,yn[t]=24,yn[256|t]=24):n<-14?(wn[t]=1024>>-n-14,wn[256|t]=1024>>-n-14|32768,yn[t]=-n-1,yn[256|t]=-n-1):n<=15?(wn[t]=n+15<<10,wn[256|t]=n+15<<10|32768,yn[t]=13,yn[256|t]=13):n<128?(wn[t]=31744,wn[256|t]=64512,yn[t]=24,yn[256|t]=24):(wn[t]=31744,wn[256|t]=64512,yn[t]=13,yn[256|t]=13)}function pn(t){ln[0]=fn(t);const n=an[0],r=n>>23&511;return wn[r]+((8388607&n)>>yn[r])}const dn=new Et(2048);for(let t=1;t<1024;++t){let n=t<<13,r=0;for(;!(8388608&n);)n<<=1,r-=8388608;n&=-8388609,r+=947912704,dn[t]=n|r}for(let t=1024;t<2048;++t)dn[t]=939524096+(t-1024<<13);const gn=new Et(64);for(let t=1;t<31;++t)gn[t]=t<<23;gn[31]=1199570944,gn[32]=2147483648;for(let t=33;t<63;++t)gn[t]=2147483648+(t-32<<23);gn[63]=3347054592;const vn=new At(64);for(let t=1;t<64;++t)32!==t&&(vn[t]=1024);function bn(t){const n=t>>10;return an[0]=dn[vn[n]+(1023&t)]+gn[n],ln[0]}function An(t){const n=+t;return S(n)||0===n?0:X(n)}function _n(t){const n=An(t);return n<0?0:n<T?n:T}function En(t,n){if(!qt(t))throw Bt("This is not an object");const e=t.constructor;if(void 0===e)return n;if(!qt(e))throw Bt(r);const o=e[O];return null==o?n:o}function Tn(t){if(Zt(t))return!1;try{return Q(t,0,0),!1}catch(t){}return!0}function xn(t,n){const r=S(t),e=S(n);if(r&&e)return 0;if(r)return 1;if(e)return-1;if(t<n)return-1;if(t>n)return 1;if(0===t&&0===n){const r=I(t,0),e=I(n,0);if(!r&&e)return-1;if(r&&!e)return 1}return 0}const Sn=new kt;function mn(t){return Wt(Sn,t)||!H(t)&&function(t){if(!Ht(t))return!1;const n=d(t);if(!Ht(n))return!1;const e=n.constructor;if(void 0===e)return!1;if(!qt(e))throw Bt(r);return g(e,rn)}(t)}function On(t){if(!mn(t))throw Bt("This is not a Float16Array object")}function Pn(t,n){const r=mn(t),e=Jt(t);if(!r&&!e)throw Bt("Species constructor didn't return TypedArray object");if("number"==typeof n){let e;if(r){const n=jn(t);e=gt(n)}else e=gt(t);if(e<n)throw Bt("Derived constructor created TypedArray object which was too small length")}if(Qt(t))throw Bt(i)}function jn(t){const n=Dt(Sn,t);if(void 0!==n){if(Tn(pt(n)))throw Bt(e);return n}const r=t.buffer;if(Tn(r))throw Bt(e);const o=a(Rn,[r,t.byteOffset,t.length],t.constructor);return Dt(Sn,o)}function Fn(t){const n=gt(t),r=[];for(let e=0;e<n;++e)r[e]=bn(t[e]);return r}const Bn=new Rt;for(const t of v(et)){if(t===P)continue;const n=p(et,t);k(n,"get")&&"function"==typeof n.get&&Nt(Bn,n.get)}const Ln=R({get:(t,n,r)=>nn(n)&&k(t,n)?bn(y(t,n)):Ut(Bn,U(t,n))?y(t,n):y(t,n,r),set:(t,n,r,e)=>nn(n)&&k(t,n)?b(t,n,pn(r)):b(t,n,r,e),getOwnPropertyDescriptor(t,n){if(nn(n)&&k(t,n)){const r=p(t,n);return r.value=bn(r.value),r}return p(t,n)},defineProperty:(t,n,r)=>nn(n)&&k(t,n)&&k(r,"value")?(r.value=pn(r.value),w(t,n,r)):w(t,n,r)});class Rn{constructor(t,n,r){let o;if(mn(t))o=a(At,[jn(t)],new.target);else if(qt(t)&&!$t(t)){let n,r;if(Jt(t)){n=t,r=gt(t);if(Tn(pt(t)))throw Bt(e);if(Qt(t))throw Bt(i);const s=new q(2*r);o=a(At,[s],new.target)}else{const e=t[m];if(null!=e&&"function"!=typeof e)throw Bt(s);null!=e?tn(t)?(n=t,r=t.length):(n=[...t],r=n.length):(n=t,r=_n(n.length)),o=a(At,[r],new.target)}for(let t=0;t<r;++t)o[t]=pn(n[t])}else o=a(At,arguments,new.target);const u=new _(o,Ln);return Gt(Sn,u,o),u}static from(t,...r){const e=this;if(!g(e,rn))throw Bt(n);if(e===Rn){if(mn(t)&&0===r.length){const n=jn(t),r=new At(pt(n),dt(n),gt(n));return new Rn(pt(wt(r)))}if(0===r.length)return new Rn(pt(_t(t,pn)));const n=r[0],e=r[1];return new Rn(pt(_t(t,(function(t,...r){return pn(l(n,this,[t,...Yt(r)]))}),e)))}let i,u;const c=t[m];if(null!=c&&"function"!=typeof c)throw Bt(s);if(null!=c)tn(t)?(i=t,u=t.length):Jt(f=t)&&f[m]===ot&&xt.next===St?(i=t,u=gt(t)):(i=[...t],u=i.length);else{if(null==t)throw Bt(o);i=F(t),u=_n(i.length)}var f;const h=new e(u);if(0===r.length)for(let t=0;t<u;++t)h[t]=i[t];else{const t=r[0],n=r[1];for(let r=0;r<u;++r)h[r]=l(t,n,[i[r],r])}return h}static of(...t){const r=this;if(!g(r,rn))throw Bt(n);const e=t.length;if(r===Rn){const n=new Rn(e),r=jn(n);for(let n=0;n<e;++n)r[n]=pn(t[n]);return n}const o=new r(e);for(let n=0;n<e;++n)o[n]=t[n];return o}keys(){On(this);const t=jn(this);return it(t)}values(){On(this);const t=jn(this);return Xt(function*(){for(const n of st(t))yield bn(n)}())}entries(){On(this);const t=jn(this);return Xt(function*(){for(const[n,r]of ut(t))yield[n,bn(r)]}())}at(t){On(this);const n=jn(this),r=gt(n),e=An(t),o=e>=0?e:r+e;if(!(o<0||o>=r))return bn(n[o])}with(t,n){On(this);const r=jn(this),e=gt(r),o=An(t),i=o>=0?o:e+o,s=+n;if(i<0||i>=e)throw Lt(c);const u=new At(pt(r),dt(r),gt(r)),f=new Rn(pt(wt(u)));return jn(f)[i]=pn(s),f}map(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0],i=En(r,Rn);if(i===Rn){const n=new Rn(e),i=jn(n);for(let n=0;n<e;++n){const e=bn(r[n]);i[n]=pn(l(t,o,[e,n,this]))}return n}const s=new i(e);Pn(s,e);for(let n=0;n<e;++n){const e=bn(r[n]);s[n]=l(t,o,[e,n,this])}return s}filter(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0],i=[];for(let n=0;n<e;++n){const e=bn(r[n]);l(t,o,[e,n,this])&&C(i,e)}const s=new(En(r,Rn))(i);return Pn(s),s}reduce(t,...n){On(this);const r=jn(this),e=gt(r);if(0===e&&0===n.length)throw Bt(u);let o,i;0===n.length?(o=bn(r[0]),i=1):(o=n[0],i=0);for(let n=i;n<e;++n)o=t(o,bn(r[n]),n,this);return o}reduceRight(t,...n){On(this);const r=jn(this),e=gt(r);if(0===e&&0===n.length)throw Bt(u);let o,i;0===n.length?(o=bn(r[e-1]),i=e-2):(o=n[0],i=e-1);for(let n=i;n>=0;--n)o=t(o,bn(r[n]),n,this);return o}forEach(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=0;n<e;++n)l(t,o,[bn(r[n]),n,this])}find(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=0;n<e;++n){const e=bn(r[n]);if(l(t,o,[e,n,this]))return e}}findIndex(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=0;n<e;++n){const e=bn(r[n]);if(l(t,o,[e,n,this]))return n}return-1}findLast(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=e-1;n>=0;--n){const e=bn(r[n]);if(l(t,o,[e,n,this]))return e}}findLastIndex(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=e-1;n>=0;--n){const e=bn(r[n]);if(l(t,o,[e,n,this]))return n}return-1}every(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=0;n<e;++n)if(!l(t,o,[bn(r[n]),n,this]))return!1;return!0}some(t,...n){On(this);const r=jn(this),e=gt(r),o=n[0];for(let n=0;n<e;++n)if(l(t,o,[bn(r[n]),n,this]))return!0;return!1}set(t,...n){On(this);const r=jn(this),s=An(n[0]);if(s<0)throw Lt(c);if(null==t)throw Bt(o);if(Qt(t))throw Bt(i);if(mn(t))return ct(jn(this),jn(t),s);if(Jt(t)){if(Tn(pt(t)))throw Bt(e)}const u=gt(r),f=F(t),h=_n(f.length);if(s===1/0||h+s>u)throw Lt(c);for(let t=0;t<h;++t)r[t+s]=pn(f[t])}reverse(){On(this);const t=jn(this);return ft(t),this}toReversed(){On(this);const t=jn(this),n=new At(pt(t),dt(t),gt(t)),r=new Rn(pt(wt(n))),e=jn(r);return ft(e),r}fill(t,...n){On(this);const r=jn(this);return ht(r,pn(t),...Yt(n)),this}copyWithin(t,n,...r){On(this);const e=jn(this);return lt(e,t,n,...Yt(r)),this}sort(t){On(this);const n=jn(this),r=void 0!==t?t:xn;return at(n,((t,n)=>r(bn(t),bn(n)))),this}toSorted(t){On(this);const n=jn(this);if(void 0!==t&&"function"!=typeof t)throw new Bt("The comparison function must be either a function or undefined");const r=void 0!==t?t:xn,e=new At(pt(n),dt(n),gt(n)),o=new Rn(pt(wt(e))),i=jn(o);return at(i,((t,n)=>r(bn(t),bn(n)))),o}slice(t,n){On(this);const r=jn(this),o=En(r,Rn);if(o===Rn){const e=new At(pt(r),dt(r),gt(r));return new Rn(pt(wt(e,t,n)))}const i=gt(r),s=An(t),u=void 0===n?i:An(n);let c,f;c=s===-1/0?0:s<0?i+s>0?i+s:0:i<s?i:s,f=u===-1/0?0:u<0?i+u>0?i+u:0:i<u?i:u;const h=f-c>0?f-c:0,l=new o(h);if(Pn(l,h),0===h)return l;if(Tn(pt(r)))throw Bt(e);let a=0;for(;c<f;)l[a]=bn(r[c]),++c,++a;return l}subarray(t,n){On(this);const r=jn(this),e=En(r,Rn),o=new At(pt(r),dt(r),gt(r)),i=yt(o,t,n),s=new e(pt(i),dt(i),gt(i));return Pn(s),s}indexOf(t,...n){On(this);const r=jn(this),e=gt(r);let o=An(n[0]);if(o===1/0)return-1;o<0&&(o+=e,o<0&&(o=0));for(let n=o;n<e;++n)if(k(r,n)&&bn(r[n])===t)return n;return-1}lastIndexOf(t,...n){On(this);const r=jn(this),e=gt(r);let o=n.length>=1?An(n[0]):e-1;if(o===-1/0)return-1;o>=0?o=o<e-1?o:e-1:o+=e;for(let n=o;n>=0;--n)if(k(r,n)&&bn(r[n])===t)return n;return-1}includes(t,...n){On(this);const r=jn(this),e=gt(r);let o=An(n[0]);if(o===1/0)return!1;o<0&&(o+=e,o<0&&(o=0));const i=S(t);for(let n=o;n<e;++n){const e=bn(r[n]);if(i&&S(e))return!0;if(e===t)return!0}return!1}join(t){On(this);const n=Fn(jn(this));return G(n,t)}toLocaleString(...t){On(this);const n=Fn(jn(this));return V(n,...Yt(t))}get[P](){if(mn(this))return"Float16Array"}}L(Rn,"BYTES_PER_ELEMENT",{value:2}),L(Rn,rn,{}),A(Rn,nt);const In=Rn.prototype;function Nn(t){return fn(t)}return L(In,"BYTES_PER_ELEMENT",{value:2}),L(In,m,{value:In.values,writable:!0,configurable:!0}),A(In,et),t.Float16Array=Rn,t.f16round=Nn,t.getFloat16=function(t,n,...r){return bn(jt(t,n,...Yt(r)))},t.hfround=Nn,t.isFloat16Array=mn,t.isTypedArray=function(t){return Jt(t)||mn(t)},t.setFloat16=function(t,n,r,...e){return Ft(t,n,pn(r),...Yt(e))},Object.defineProperty(t,Symbol.toStringTag,{value:"Module"}),t}({});
-    //# sourceMappingURL=/sm/7a96817af33df764840ad1e8f92cd158d82f9a9f4774da69f4d0e9a353fb8702.map
-
+// Polyfill for Float16Array, DataView float16 accessors, and Math.f16round
+{
     const globals =
         typeof globalThis == "undefined"
             ? typeof self == "undefined"
@@ -18,11 +8,605 @@ if (typeof Float16Array === "undefined") {
                     : global
                 : self
             : globalThis;
-    globals.Float16Array = float16.Float16Array;
-    globals.f16round = float16.f16round;
-    globals.getFloat16 = float16.getFloat16;
-    globals.hfround = float16.hfround;
-    globals.isFloat16Array = float16.isFloat16Array;
-    globals.isTypedArray = float16.isTypedArray;
-    globals.setFloat16 = float16.setFloat16;
+
+    const BYTES_PER_ELEMENT = 2;
+    const FLOAT16_MIN_VALUE = 5.960464477539063e-8;
+    const FLOAT16_MIN_NORMAL = 0.00006103515625;
+    const FLOAT16_MAX_VALUE = 65504;
+    const FLOAT16_EPSILON = 0.0009765625;
+    const FLOAT64_ROUNDING_FACTOR = 1 / Number.EPSILON;
+
+    function define(target, name, value) {
+        if (!(name in target)) {
+            Object.defineProperty(target, name, {
+                value: value,
+                writable: true,
+                configurable: true
+            });
+        }
+    }
+
+    function defineGetter(target, name, getter) {
+        Object.defineProperty(target, name, {
+            get: getter,
+            enumerable: false,
+            configurable: true
+        });
+    }
+
+    function defineInternal(target, name, value) {
+        Object.defineProperty(target, name, {
+            value: value,
+            writable: true,
+            configurable: false
+        });
+    }
+
+    function toInteger(value) {
+        const number = Number(value);
+        if (number !== number || number === 0) return 0;
+        if (number === Infinity || number === -Infinity) return number;
+        return (number < 0 ? -1 : 1) * Math.floor(Math.abs(number));
+    }
+
+    function toLength(value) {
+        const length = toInteger(value);
+        if (length <= 0) return 0;
+        return Math.min(length, Number.MAX_SAFE_INTEGER || 9007199254740991);
+    }
+
+    function toIndex(value) {
+        const index = value === undefined ? 0 : toInteger(value);
+        if (index < 0 || index === Infinity) {
+            throw new RangeError("Invalid index");
+        }
+        return index;
+    }
+
+    function toArrayLength(value) {
+        const length = value === undefined ? 0 : toInteger(value);
+        if (length < 0 || length === Infinity) {
+            throw new RangeError("Invalid typed array length");
+        }
+        return Math.min(length, Number.MAX_SAFE_INTEGER || 9007199254740991);
+    }
+
+    function isArrayBuffer(value) {
+        return value instanceof ArrayBuffer ||
+            Object.prototype.toString.call(value) === "[object ArrayBuffer]";
+    }
+
+    function isCallable(value) {
+        return typeof value === "function";
+    }
+
+    function hasIterator(value) {
+        return typeof Symbol === "function" &&
+            Symbol.iterator &&
+            value != null &&
+            isCallable(value[Symbol.iterator]);
+    }
+
+    function iterableToArray(value) {
+        const result = [];
+
+        if (hasIterator(value)) {
+            const iterator = value[Symbol.iterator]();
+            let step;
+            while (!(step = iterator.next()).done) {
+                result.push(step.value);
+            }
+            return result;
+        }
+
+        if (value == null) {
+            throw new TypeError("Cannot convert undefined or null to object");
+        }
+
+        const object = Object(value);
+        const length = toLength(object.length);
+        for (let index = 0; index < length; index++) {
+            result.push(object[index]);
+        }
+        return result;
+    }
+
+    function f16round(value) {
+        const number = Number(value);
+        if (!isFinite(number) || number === 0) return number;
+
+        const sign = number < 0 ? -1 : 1;
+        const absolute = Math.abs(number);
+
+        if (absolute < FLOAT16_MIN_NORMAL) {
+            return sign * (absolute / FLOAT16_MIN_VALUE + FLOAT64_ROUNDING_FACTOR - FLOAT64_ROUNDING_FACTOR) * FLOAT16_MIN_VALUE;
+        }
+
+        const rounded = (1 + FLOAT16_EPSILON * FLOAT64_ROUNDING_FACTOR) * absolute;
+        const result = rounded - (rounded - absolute);
+        return result > FLOAT16_MAX_VALUE || result !== result ? sign * Infinity : sign * result;
+    }
+
+    function float16BitsToNumber(bits) {
+        bits = bits & 0xffff;
+
+        const sign = bits & 0x8000 ? -1 : 1;
+        const exponent = (bits >> 10) & 0x1f;
+        const fraction = bits & 0x03ff;
+
+        if (exponent === 0) {
+            return sign * fraction * FLOAT16_MIN_VALUE;
+        }
+
+        if (exponent === 0x1f) {
+            return fraction ? NaN : sign * Infinity;
+        }
+
+        return sign * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
+    }
+
+    function numberToFloat16Bits(value) {
+        const rounded = f16round(value);
+        const sign = rounded < 0 || (rounded === 0 && 1 / rounded === -Infinity) ? 0x8000 : 0;
+        const absolute = Math.abs(rounded);
+
+        if (rounded !== rounded) return 0x7e00;
+        if (absolute === Infinity) return sign | 0x7c00;
+        if (absolute === 0) return sign;
+        if (absolute < FLOAT16_MIN_NORMAL) {
+            return sign | Math.round(absolute / FLOAT16_MIN_VALUE);
+        }
+
+        let exponent = Math.floor(Math.log(absolute) / Math.LN2);
+        let fraction = Math.round((absolute / Math.pow(2, exponent) - 1) * 1024);
+        if (fraction === 1024) {
+            exponent++;
+            fraction = 0;
+        }
+
+        const biasedExponent = exponent + 15;
+        if (biasedExponent >= 0x1f) return sign | 0x7c00;
+        return sign | (biasedExponent << 10) | (fraction & 0x03ff);
+    }
+
+    function installIndex(target, index) {
+        Object.defineProperty(target, index, {
+            get: function () {
+                return this._get(index);
+            },
+            set: function (value) {
+                this._set(index, value);
+            },
+            enumerable: true,
+            configurable: false
+        });
+    }
+
+    function normalizeIndex(index, length) {
+        index = toInteger(index);
+        return index < 0 ? Math.max(length + index, 0) : Math.min(index, length);
+    }
+
+    function createIterator(next) {
+        const iterator = { next: next };
+        if (typeof Symbol === "function" && Symbol.iterator) {
+            iterator[Symbol.iterator] = function () {
+                return this;
+            };
+        }
+        return iterator;
+    }
+
+    function compareNumbers(left, right) {
+        const leftIsNaN = left !== left;
+        const rightIsNaN = right !== right;
+        if (leftIsNaN && rightIsNaN) return 0;
+        if (leftIsNaN) return 1;
+        if (rightIsNaN) return -1;
+        if (left < right) return -1;
+        if (left > right) return 1;
+        return 0;
+    }
+
+    function Float16ArrayPolyfill(input, byteOffset, length) {
+        if (!(this instanceof Float16ArrayPolyfill)) {
+            throw new TypeError("Constructor Float16Array requires 'new'");
+        }
+
+        let buffer;
+        let offset = 0;
+        let arrayLength;
+        let values;
+
+        if (isArrayBuffer(input)) {
+            offset = toIndex(byteOffset);
+            if (offset % BYTES_PER_ELEMENT !== 0) {
+                throw new RangeError("start offset of Float16Array should be a multiple of 2");
+            }
+            if (offset > input.byteLength) {
+                throw new RangeError("Start offset is outside the bounds of the buffer");
+            }
+
+            const remainingBytes = input.byteLength - offset;
+            if (length === undefined) {
+                if (remainingBytes % BYTES_PER_ELEMENT !== 0) {
+                    throw new RangeError("byte length of Float16Array should be a multiple of 2");
+                }
+                arrayLength = remainingBytes / BYTES_PER_ELEMENT;
+            } else {
+                arrayLength = toArrayLength(length);
+                if (arrayLength * BYTES_PER_ELEMENT > remainingBytes) {
+                    throw new RangeError("Invalid typed array length");
+                }
+            }
+
+            buffer = input;
+        } else if (typeof input === "number" || input === undefined) {
+            arrayLength = toArrayLength(input);
+            buffer = new ArrayBuffer(arrayLength * BYTES_PER_ELEMENT);
+        } else {
+            values = iterableToArray(input);
+            arrayLength = values.length;
+            buffer = new ArrayBuffer(arrayLength * BYTES_PER_ELEMENT);
+        }
+
+        defineInternal(this, "_buffer", buffer);
+        defineInternal(this, "_byteOffset", offset);
+        defineInternal(this, "_length", arrayLength);
+        defineInternal(this, "_view", new DataView(buffer, offset, arrayLength * BYTES_PER_ELEMENT));
+
+        for (let index = 0; index < arrayLength; index++) {
+            installIndex(this, index);
+        }
+
+        if (values) {
+            this.set(values);
+        }
+    }
+
+    defineGetter(Float16ArrayPolyfill.prototype, "buffer", function () {
+        return this._buffer;
+    });
+    defineGetter(Float16ArrayPolyfill.prototype, "byteOffset", function () {
+        return this._byteOffset;
+    });
+    defineGetter(Float16ArrayPolyfill.prototype, "byteLength", function () {
+        return this._length * BYTES_PER_ELEMENT;
+    });
+    defineGetter(Float16ArrayPolyfill.prototype, "length", function () {
+        return this._length;
+    });
+
+    define(Float16ArrayPolyfill, "BYTES_PER_ELEMENT", BYTES_PER_ELEMENT);
+    define(Float16ArrayPolyfill.prototype, "BYTES_PER_ELEMENT", BYTES_PER_ELEMENT);
+
+    define(Float16ArrayPolyfill.prototype, "_get", function (index) {
+        return float16BitsToNumber(this._view.getUint16(index * BYTES_PER_ELEMENT, true));
+    });
+
+    define(Float16ArrayPolyfill.prototype, "_set", function (index, value) {
+        this._view.setUint16(index * BYTES_PER_ELEMENT, numberToFloat16Bits(value), true);
+    });
+
+    define(Float16ArrayPolyfill, "from", function (source, mapFn, thisArg) {
+        const values = iterableToArray(source);
+        if (mapFn !== undefined) {
+            if (!isCallable(mapFn)) throw new TypeError("mapFn must be a function");
+            for (let index = 0; index < values.length; index++) {
+                values[index] = mapFn.call(thisArg, values[index], index);
+            }
+        }
+        return new this(values);
+    });
+
+    define(Float16ArrayPolyfill, "of", function () {
+        return new this(arguments);
+    });
+
+    define(Float16ArrayPolyfill.prototype, "at", function (index) {
+        index = toInteger(index);
+        if (index < 0) index += this.length;
+        return index < 0 || index >= this.length ? undefined : this[index];
+    });
+
+    define(Float16ArrayPolyfill.prototype, "copyWithin", function (target, start, end) {
+        const length = this.length;
+        target = normalizeIndex(target, length);
+        start = normalizeIndex(start, length);
+        end = end === undefined ? length : normalizeIndex(end, length);
+
+        const values = [];
+        for (let index = start; index < end; index++) {
+            values.push(this[index]);
+        }
+        for (let index = 0; index < values.length && target + index < length; index++) {
+            this[target + index] = values[index];
+        }
+        return this;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "entries", function () {
+        const array = this;
+        let index = 0;
+        return createIterator(function () {
+            if (index >= array.length) return { value: undefined, done: true };
+            return { value: [index, array[index++]], done: false };
+        });
+    });
+
+    define(Float16ArrayPolyfill.prototype, "every", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = 0; index < this.length; index++) {
+            if (!callback.call(thisArg, this[index], index, this)) return false;
+        }
+        return true;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "fill", function (value, start, end) {
+        start = normalizeIndex(start, this.length);
+        end = end === undefined ? this.length : normalizeIndex(end, this.length);
+        for (let index = start; index < end; index++) {
+            this[index] = value;
+        }
+        return this;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "filter", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        const values = [];
+        for (let index = 0; index < this.length; index++) {
+            const value = this[index];
+            if (callback.call(thisArg, value, index, this)) values.push(value);
+        }
+        return new Float16ArrayPolyfill(values);
+    });
+
+    define(Float16ArrayPolyfill.prototype, "find", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = 0; index < this.length; index++) {
+            const value = this[index];
+            if (callback.call(thisArg, value, index, this)) return value;
+        }
+    });
+
+    define(Float16ArrayPolyfill.prototype, "findIndex", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = 0; index < this.length; index++) {
+            if (callback.call(thisArg, this[index], index, this)) return index;
+        }
+        return -1;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "findLast", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = this.length - 1; index >= 0; index--) {
+            const value = this[index];
+            if (callback.call(thisArg, value, index, this)) return value;
+        }
+    });
+
+    define(Float16ArrayPolyfill.prototype, "findLastIndex", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = this.length - 1; index >= 0; index--) {
+            if (callback.call(thisArg, this[index], index, this)) return index;
+        }
+        return -1;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "forEach", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = 0; index < this.length; index++) {
+            callback.call(thisArg, this[index], index, this);
+        }
+    });
+
+    define(Float16ArrayPolyfill.prototype, "includes", function (searchElement, fromIndex) {
+        let index = normalizeIndex(fromIndex, this.length);
+        const searchIsNaN = searchElement !== searchElement;
+        for (; index < this.length; index++) {
+            if (this[index] === searchElement || (searchIsNaN && this[index] !== this[index])) return true;
+        }
+        return false;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "indexOf", function (searchElement, fromIndex) {
+        let index = normalizeIndex(fromIndex, this.length);
+        for (; index < this.length; index++) {
+            if (this[index] === searchElement) return index;
+        }
+        return -1;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "join", function (separator) {
+        const values = [];
+        for (let index = 0; index < this.length; index++) {
+            values.push(this[index]);
+        }
+        return values.join(separator);
+    });
+
+    define(Float16ArrayPolyfill.prototype, "keys", function () {
+        const array = this;
+        let index = 0;
+        return createIterator(function () {
+            if (index >= array.length) return { value: undefined, done: true };
+            return { value: index++, done: false };
+        });
+    });
+
+    define(Float16ArrayPolyfill.prototype, "lastIndexOf", function (searchElement, fromIndex) {
+        let index = fromIndex === undefined ? this.length - 1 : toInteger(fromIndex);
+        if (index < 0) index += this.length;
+        index = Math.min(index, this.length - 1);
+        for (; index >= 0; index--) {
+            if (this[index] === searchElement) return index;
+        }
+        return -1;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "map", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        const result = new Float16ArrayPolyfill(this.length);
+        for (let index = 0; index < this.length; index++) {
+            result[index] = callback.call(thisArg, this[index], index, this);
+        }
+        return result;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "reduce", function (callback, initialValue) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        if (this.length === 0 && arguments.length < 2) {
+            throw new TypeError("Reduce of empty array with no initial value");
+        }
+
+        let index = 0;
+        let accumulator = initialValue;
+        if (arguments.length < 2) {
+            accumulator = this[0];
+            index = 1;
+        }
+        for (; index < this.length; index++) {
+            accumulator = callback(accumulator, this[index], index, this);
+        }
+        return accumulator;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "reduceRight", function (callback, initialValue) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        if (this.length === 0 && arguments.length < 2) {
+            throw new TypeError("Reduce of empty array with no initial value");
+        }
+
+        let index = this.length - 1;
+        let accumulator = initialValue;
+        if (arguments.length < 2) {
+            accumulator = this[index--];
+        }
+        for (; index >= 0; index--) {
+            accumulator = callback(accumulator, this[index], index, this);
+        }
+        return accumulator;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "reverse", function () {
+        for (let left = 0, right = this.length - 1; left < right; left++, right--) {
+            const value = this[left];
+            this[left] = this[right];
+            this[right] = value;
+        }
+        return this;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "set", function (source, offset) {
+        const values = iterableToArray(source);
+        offset = toIndex(offset);
+        if (offset + values.length > this.length) {
+            throw new RangeError("Offset is out of bounds");
+        }
+        for (let index = 0; index < values.length; index++) {
+            this[offset + index] = values[index];
+        }
+    });
+
+    define(Float16ArrayPolyfill.prototype, "slice", function (start, end) {
+        start = normalizeIndex(start, this.length);
+        end = end === undefined ? this.length : normalizeIndex(end, this.length);
+        const result = new Float16ArrayPolyfill(Math.max(end - start, 0));
+        for (let index = 0; index < result.length; index++) {
+            result[index] = this[start + index];
+        }
+        return result;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "some", function (callback, thisArg) {
+        if (!isCallable(callback)) throw new TypeError("callback must be a function");
+        for (let index = 0; index < this.length; index++) {
+            if (callback.call(thisArg, this[index], index, this)) return true;
+        }
+        return false;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "sort", function (compareFn) {
+        if (compareFn !== undefined && !isCallable(compareFn)) {
+            throw new TypeError("compareFn must be a function");
+        }
+        const values = iterableToArray(this);
+        values.sort(compareFn || compareNumbers);
+        this.set(values);
+        return this;
+    });
+
+    define(Float16ArrayPolyfill.prototype, "subarray", function (start, end) {
+        start = normalizeIndex(start, this.length);
+        end = end === undefined ? this.length : normalizeIndex(end, this.length);
+        return new Float16ArrayPolyfill(this.buffer, this.byteOffset + start * BYTES_PER_ELEMENT, Math.max(end - start, 0));
+    });
+
+    define(Float16ArrayPolyfill.prototype, "toLocaleString", function () {
+        const values = [];
+        for (let index = 0; index < this.length; index++) {
+            values.push(this[index]);
+        }
+        return values.toLocaleString.apply(values, arguments);
+    });
+
+    define(Float16ArrayPolyfill.prototype, "toReversed", function () {
+        return this.slice().reverse();
+    });
+
+    define(Float16ArrayPolyfill.prototype, "toSorted", function (compareFn) {
+        return this.slice().sort(compareFn);
+    });
+
+    define(Float16ArrayPolyfill.prototype, "values", function () {
+        const array = this;
+        let index = 0;
+        return createIterator(function () {
+            if (index >= array.length) return { value: undefined, done: true };
+            return { value: array[index++], done: false };
+        });
+    });
+
+    define(Float16ArrayPolyfill.prototype, "with", function (index, value) {
+        index = toInteger(index);
+        if (index < 0) index += this.length;
+        if (index < 0 || index >= this.length) {
+            throw new RangeError("Index out of range");
+        }
+
+        const result = this.slice();
+        result[index] = value;
+        return result;
+    });
+
+    if (typeof Symbol === "function") {
+        if (Symbol.iterator) {
+            define(Float16ArrayPolyfill.prototype, Symbol.iterator, Float16ArrayPolyfill.prototype.values);
+        }
+        if (Symbol.toStringTag) {
+            define(Float16ArrayPolyfill.prototype, Symbol.toStringTag, "Float16Array");
+        }
+    }
+
+    if (typeof Math === "object") {
+        define(Math, "f16round", f16round);
+    }
+
+    if (typeof DataView === "function") {
+        define(DataView.prototype, "getFloat16", function (byteOffset, littleEndian) {
+            return float16BitsToNumber(this.getUint16(byteOffset, littleEndian));
+        });
+
+        define(DataView.prototype, "setFloat16", function (byteOffset, value, littleEndian) {
+            this.setUint16(byteOffset, numberToFloat16Bits(value), littleEndian);
+        });
+    }
+
+    if (typeof globals.Float16Array === "undefined") {
+        Object.defineProperty(globals, "Float16Array", {
+            value: Float16ArrayPolyfill,
+            writable: true,
+            configurable: true
+        });
+    }
 }

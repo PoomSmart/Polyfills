@@ -1,42 +1,67 @@
-(function () {
-    // https://gist.github.com/gtrabanco/7c97bd41aa74af974fa935bfb5044b6e
-    const hasGroup = typeof Object.groupBy === typeof undefined || typeof Array.groupToMap === typeof undefined || typeof Array.group === typeof undefined;
-    if (!hasGroup) {
-        const groupBy = (arr, callback) => {
-            return arr.reduce((acc = {}, ...args) => {
-                const key = callback(...args);
-                acc[key] ??= []
-                acc[key].push(args[0]);
-                return acc;
-            }, {});
-        };
-
-        if (typeof Object.groupBy === typeof undefined) {
-            Object.groupBy = groupBy;
-        }
-
-        if (typeof Array.groupToMap === typeof undefined) {
-            Array.groupToMap = groupBy;
-        }
-
-        if (typeof Array.group === typeof undefined) {
-            Array.group = groupBy;
+if (typeof Object.groupBy === 'undefined' || (typeof Map === 'function' && typeof Map.groupBy === 'undefined')) {
+    function define(target, name, value) {
+        if (!(name in target)) {
+            Object.defineProperty(target, name, {
+                value: value,
+                writable: true,
+                configurable: true
+            });
         }
     }
 
-    // https://github.com/jimmywarting/groupby-polyfill
-    if (typeof Map.groupBy === typeof undefined) {
-        Map.groupBy = function groupBy(iterable, callbackfn) {
-            const map = new Map();
-            let i = 0;
-            for (const value of iterable) {
-                const key = callbackfn(value, i++), list = map.get(key);
-                if (list)
-                    list.push(value)
-                else
-                    map.set(key, [value]);
+    function requireCallback(callback) {
+        if (typeof callback !== 'function') {
+            throw new TypeError('callback must be a function');
+        }
+        return callback;
+    }
+
+    function requireIterable(items) {
+        const iteratorKey = typeof Symbol === 'function' && Symbol.iterator;
+        const iterator = items != null && ((iteratorKey && items[iteratorKey]) || items['@@iterator']);
+        if (typeof iterator !== 'function') {
+            throw new TypeError('items must be iterable');
+        }
+        return items;
+    }
+
+    function toPropertyKey(value) {
+        return typeof value === 'symbol' ? value : String(value);
+    }
+
+    define(Object, 'groupBy', function groupBy(items, callback) {
+        const groups = Object.create(null);
+        const callbackfn = requireCallback(callback);
+        let index = 0;
+
+        for (const value of requireIterable(items)) {
+            const key = toPropertyKey(callbackfn(value, index++));
+            if (!(key in groups)) {
+                groups[key] = [];
             }
-            return map;
+            groups[key].push(value);
         }
+
+        return groups;
+    });
+
+    if (typeof Map === 'function') {
+        define(Map, 'groupBy', function groupBy(items, callback) {
+            const groups = new Map();
+            const callbackfn = requireCallback(callback);
+            let index = 0;
+
+            for (const value of requireIterable(items)) {
+                const key = callbackfn(value, index++);
+                const group = groups.get(key);
+                if (group) {
+                    group.push(value);
+                } else {
+                    groups.set(key, [value]);
+                }
+            }
+
+            return groups;
+        });
     }
-})();
+}
