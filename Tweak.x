@@ -534,9 +534,11 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
 // Dedicated KVO observer for WKWebView URL changes.
 // Using a separate object avoids conflicts with WKWebView subclass
 // overrides of -observeValueForKeyPath:ofObject:change:context:.
-@interface PolyfillsKVOObserver : NSObject
-@property (nonatomic, weak) WKWebView *webView;
+@interface PolyfillsKVOObserver : NSObject {
+    BOOL _observing;
+}
 - (instancetype)initWithWebView:(WKWebView *)webView;
+- (void)stopObserving:(WKWebView *)webView;
 @end
 
 @implementation PolyfillsKVOObserver
@@ -544,7 +546,7 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
 - (instancetype)initWithWebView:(WKWebView *)webView {
     self = [super init];
     if (self) {
-        _webView = webView;
+        _observing = YES;
         [webView addObserver:self forKeyPath:@"URL" options:NSKeyValueObservingOptionNew context:NULL];
     }
     return self;
@@ -552,7 +554,9 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
     if ([keyPath isEqualToString:@"URL"]) {
-        WKWebView *wv = self.webView;
+        // Use the observed object directly; never hold a (weak) reference to
+        // the web view, since a weak load of a deallocating object returns nil.
+        WKWebView *wv = [object isKindOfClass:[WKWebView class]] ? (WKWebView *)object : nil;
         if (!wv) return;
         id newURLVal = change[NSKeyValueChangeNewKey];
         NSURL *newURL = [newURLVal isKindOfClass:[NSURL class]] ? (NSURL *)newURLVal : nil;
@@ -563,11 +567,13 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
     [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 }
 
-- (void)dealloc {
-    WKWebView *wv = self.webView;
-    if (wv) {
+// Must be driven from the web view's own -dealloc (where the web view is still
+// a valid object), not from this observer's -dealloc relying on a weak ref.
+- (void)stopObserving:(WKWebView *)webView {
+    if (_observing && webView) {
+        _observing = NO;
         @try {
-            [wv removeObserver:self forKeyPath:@"URL"];
+            [webView removeObserver:self forKeyPath:@"URL"];
         } @catch (NSException *e) {}
     }
 }
@@ -617,9 +623,14 @@ static const void *InjectedKey = &InjectedKey;
 }
 
 - (void)dealloc {
-    // Removing the associated object triggers PolyfillsKVOObserver's dealloc
-    // which safely removes itself as a KVO observer.
-    objc_setAssociatedObject(self, KVOObserverKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Remove the KVO observer here, while `self` is still a valid web view.
+    // Relying on the observer's own -dealloc fails because its weak ref to a
+    // deallocating web view reads as nil, leaving the observer registered.
+    PolyfillsKVOObserver *observer = objc_getAssociatedObject(self, KVOObserverKey);
+    if (observer) {
+        [observer stopObserving:self];
+        objc_setAssociatedObject(self, KVOObserverKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     %orig;
 }
 
