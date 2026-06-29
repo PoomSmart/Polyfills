@@ -28,6 +28,7 @@
         detectProperty: "backdrop-filter",
         detectValue: "blur(1px)",
         quickTest: /(?:^|[;{])\s*backdrop-filter\s*:/m,
+        webkitOnly: true,
     });
 
     if (!patcher.needsPolyfill()) {
@@ -49,12 +50,70 @@
                 (node.id && node.id.indexOf("css-layers-src-") === 0) ||
                 (node.id && node.id.indexOf("oklch-") === 0) ||
                 (node.id && node.id.indexOf("patched-") === 0) ||
+                (node.id && node.id.indexOf("backdrop-supplement-") === 0) ||
                 (node.id && node.id.indexOf("color-mix-") === 0))
         );
     }
 
     const processedStyleNodes = new WeakMap();
     const processedLinks = new WeakMap();
+    const supplementNodes = new WeakMap();
+
+    const backdropDeclPattern =
+        /(?:^|;)(\s*)(?!-webkit-)backdrop-filter\s*:\s*([^;}]*)|^\s*(?!-webkit-)backdrop-filter\s*:\s*([^;}]*)$/gm;
+
+    function extractSupplementalBackdropStylesheet(css) {
+        if (!css || /@layer/i.test(css) || !patcher.quickTest.test(css)) {
+            return "";
+        }
+
+        var parts = [];
+        var openIdx = 0;
+
+        while (openIdx < css.length) {
+            var ruleOpen = css.indexOf("{", openIdx);
+            if (ruleOpen === -1) break;
+            var ruleClose = css.indexOf("}", ruleOpen);
+            if (ruleClose === -1) break;
+
+            var selector = css.slice(openIdx, ruleOpen).trim();
+            var block = css.slice(ruleOpen + 1, ruleClose);
+            var decls = [];
+
+            block.replace(backdropDeclPattern, function (_m, s1, v1, v2) {
+                decls.push("-webkit-backdrop-filter: " + (v1 || v2));
+                return _m;
+            });
+
+            if (decls.length && selector.indexOf("@") !== 0) {
+                parts.push(selector + "{" + decls.join(";") + "}");
+            }
+
+            openIdx = ruleClose + 1;
+        }
+
+        return parts.join("\n");
+    }
+
+    function injectSupplementalBackdropStyle(anchor, css) {
+        if (!anchor || !anchor.parentNode || !css) return;
+
+        var existing = supplementNodes.get(anchor);
+        if (existing && existing.parentNode) {
+            if (existing.textContent === css) return;
+            existing.textContent = css;
+            dbg("updated supplemental backdrop stylesheet for", anchor.id || anchor.tagName);
+            return;
+        }
+
+        var styleNode = document.createElement("style");
+        styleNode.setAttribute("data-webkit-backdrop-polyfill", "");
+        styleNode.textContent = css;
+        if (anchor.id) styleNode.id = "backdrop-supplement-" + anchor.id;
+        anchor.parentNode.insertBefore(styleNode, anchor.nextSibling);
+        supplementNodes.set(anchor, styleNode);
+        dbg("injected supplemental backdrop stylesheet for", anchor.id || anchor.tagName);
+    }
 
     function processStyleNode(node) {
         if (!node || node.tagName !== "STYLE" || isPolyfillInjectedStyle(node)) {
@@ -63,14 +122,10 @@
         const txt = node.textContent;
         if (processedStyleNodes.get(node) === txt) return;
         processedStyleNodes.set(node, txt);
-        if (!txt || !patcher.quickTest || !/(?:^|[;{])\s*backdrop-filter\s*:/m.test(txt)) {
-            return;
-        }
-        const patched = patchText(txt);
-        if (patched !== txt) {
-            processedStyleNodes.set(node, patched);
-            node.textContent = patched;
-            dbg("patched style node:", node.id || "<style>");
+
+        var supplemental = extractSupplementalBackdropStylesheet(txt);
+        if (supplemental) {
+            injectSupplementalBackdropStyle(node, supplemental);
         }
     }
 
@@ -92,12 +147,9 @@
                     return;
                 }
                 if (!/(?:^|[;{])\s*backdrop-filter\s*:/m.test(css)) return;
-                const patched = patchText(css);
-                if (patched === css) return;
-                const styleNode = document.createElement("style");
-                styleNode.textContent = patched;
-                if (link.id) styleNode.id = "patched-backdrop-" + link.id;
-                link.parentNode.insertBefore(styleNode, link.nextSibling);
+                var supplemental = extractSupplementalBackdropStylesheet(css);
+                if (!supplemental) return;
+                injectSupplementalBackdropStyle(link, supplemental);
                 dbg("patched link stylesheet:", href);
             })
             .catch(function (err) {

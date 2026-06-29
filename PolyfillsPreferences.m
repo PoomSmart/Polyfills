@@ -261,6 +261,8 @@ static UITextField *PFLocateTextField(UIView *root) {
             for (NSString *f in [fm contentsOfDirectoryAtPath:baseDir error:nil])
                 if ([f hasSuffix:@".js"]) {
                     NSString *lower = f.lowercaseString;
+                    if ([lower hasPrefix:@"a_"])
+                        continue;
                     if ([seen containsObject:lower])
                         continue; // first one wins
                     [seen addObject:lower];

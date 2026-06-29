@@ -1,15 +1,7 @@
 // CSS mask-image -webkit-prefix polyfill for iOS < 15.4
 // Safari < 15.4 requires -webkit-mask-image instead of the unprefixed mask-image.
-// This polyfill:
-//   - Patches <style> textContent directly so the browser parses -webkit-mask-* properties.
-//   - Fetches and patches <link rel="stylesheet"> files (including CORS-enabled CDNs).
-//   - Traverses and observes style elements inside Shadow DOMs.
-//   - Monkeypatches CSSStyleSheet.prototype (insertRule, addRule, replace, replaceSync).
-//   - Monkeypatches CSSStyleDeclaration.prototype (setProperty, getters/setters).
-//   - Intercepts inline style writes via Element.prototype.setAttribute.
-//
-// Properties covered: mask, mask-image, mask-size, mask-repeat, mask-position,
-//                     mask-origin, mask-clip, mask-composite, mask-mode
+// Never rewrites whole <style> sheets in place (breaks monolithic bundles).
+// Instead injects a supplemental <style> with -webkit-mask-* copies of matching rules only.
 (function polyfillWebkitMaskImage() {
     var __PF_DEBUG__ = false;
     const LOG = '[webkit-mask]';
@@ -25,30 +17,59 @@
     window.__webkitMaskPolyfillApplied = true;
     dbg('polyfill starting');
 
-    const MASK_PROPS = [
-        'mask',
-        'mask-image',
-        'mask-size',
-        'mask-repeat',
-        'mask-position',
-        'mask-origin',
-        'mask-clip',
-        'mask-composite',
-        'mask-mode',
-    ];
+    const MASK_PROP =
+        'mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?';
+
+    const MASK_PROP_CAPTURE =
+        '(mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?)';
+
+    const maskQuickTest = new RegExp(
+        '(?:^|[;{])\\s*(?:-webkit-)?' + MASK_PROP + '\\s*:',
+        'm'
+    );
+
+    const maskDeclPattern = new RegExp(
+        '(?:^|;)(\\s*)(?!-webkit-)' + MASK_PROP_CAPTURE + '\\s*:\\s*([^;}]*)',
+        'gm'
+    );
+
+    const maskFirstDeclPattern = new RegExp(
+        '^\\s*(?!-webkit-)' + MASK_PROP_CAPTURE + '\\s*:\\s*([^;}]*)'
+    );
+
+    function containsLayer(css) {
+        return !!(css && /@layer/i.test(css));
+    }
+
+    function containsMaskDecl(css) {
+        return !!(css && maskQuickTest.test(css));
+    }
+
+    function shouldPatchCssText(css) {
+        return !!(css && !containsLayer(css) && containsMaskDecl(css));
+    }
 
     const createPatcher = window.__pfCreateWebkitPropertyPatcher;
     const maskPatcher = createPatcher
         ? createPatcher({
-              properties: MASK_PROPS,
-              detectProperty: "mask-image",
-              detectValue: "none",
-              quickTest:
-                  /(?:^|[;{])\s*(?:-webkit-)?mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?\s*:/m,
+              properties: [
+                  'mask',
+                  'mask-image',
+                  'mask-size',
+                  'mask-repeat',
+                  'mask-position',
+                  'mask-origin',
+                  'mask-clip',
+                  'mask-composite',
+                  'mask-mode',
+              ],
+              detectProperty: 'mask-image',
+              detectValue: 'none',
+              quickTest: maskQuickTest,
+              webkitOnly: true,
           })
         : null;
 
-    // Feature detection: if unprefixed mask-image is supported natively, bail out.
     const _test = document.createElement('div');
     _test.style.setProperty('mask-image', 'none');
     const nativeVal = _test.style.getPropertyValue('mask-image');
@@ -59,35 +80,172 @@
     }
     dbg('native mask-image NOT supported — polyfill active');
 
-    // Also check -webkit-mask-image support for diagnostics
-    _test.style.setProperty('-webkit-mask-image', 'none');
-    dbg('-webkit-mask-image supported:', JSON.stringify(_test.style.getPropertyValue('-webkit-mask-image')));
+    function findMatchingBrace(css, openIdx) {
+        var depth = 1;
+        var j = openIdx + 1;
+        while (j < css.length && depth > 0) {
+            if (css[j] === '{') depth++;
+            else if (css[j] === '}') depth--;
+            j++;
+        }
+        return j;
+    }
 
-    // ---- Text-level CSS patching ----
-    // Since the browser discards unrecognized properties at parse time, we must duplicate
-    // any unprefixed mask property to its -webkit- prefixed equivalent in the raw CSS text.
-    function addWebkitPrefixToText(css) {
-        if (maskPatcher) return maskPatcher.patchText(css);
-        if (!css || !/\bmask/.test(css)) return css;
-        return css.replace(
-            /(?:^|;|\{)\s*(mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?)\s*:\s*([^;}]*)/g,
-            function (match, prop, val) {
-                if (prop.startsWith('-webkit-')) return match;
-                const prefixChar = match.trim().charAt(0);
-                const prefix = (prefixChar === ';' || prefixChar === '{') ? prefixChar : '';
-                return prefix + ' ' + prop + ': ' + val + '; -webkit-' + prop + ': ' + val;
-            }
+    function patchBlockMaskDeclarations(block) {
+        if (!block || !containsMaskDecl(block)) {
+            return block;
+        }
+
+        var patched = block.replace(maskDeclPattern, function (_match, space, prop, val) {
+            return ';' + space + '-webkit-' + prop + ': ' + val;
+        });
+
+        patched = patched.replace(maskFirstDeclPattern, function (_match, prop, val) {
+            return '-webkit-' + prop + ': ' + val;
+        });
+
+        return patched;
+    }
+
+    function extractMaskDeclarationsOnly(block) {
+        var decls = [];
+
+        block.replace(maskDeclPattern, function (_match, _space, prop, val) {
+            decls.push('-webkit-' + prop + ': ' + val);
+            return _match;
+        });
+
+        block.replace(maskFirstDeclPattern, function (_match, prop, val) {
+            decls.push('-webkit-' + prop + ': ' + val);
+            return _match;
+        });
+
+        return decls.join(';');
+    }
+
+    function patchCssRuleText(rule) {
+        if (!rule || !containsMaskDecl(rule)) {
+            return rule;
+        }
+
+        var open = rule.indexOf('{');
+        if (open === -1) {
+            return patchBlockMaskDeclarations(rule);
+        }
+
+        var close = rule.lastIndexOf('}');
+        if (close <= open) {
+            return rule;
+        }
+
+        return (
+            rule.slice(0, open + 1) +
+            patchBlockMaskDeclarations(rule.slice(open + 1, close)) +
+            rule.slice(close)
         );
     }
 
-    // ---- CSSStyleSheet prototype patching ----
-    // Intercept rules added dynamically via JavaScript APIs.
+    function walkCssBlocks(css, start, end, emitAll, outParts) {
+        var i = start;
+        end = end == null ? css.length : end;
+
+        while (i < end) {
+            while (i < end && /\s/.test(css[i])) {
+                if (emitAll) outParts.push(css[i]);
+                i++;
+            }
+            if (i >= end) break;
+            if (css[i] === '}') break;
+
+            if (css[i] === '@') {
+                var atStart = i;
+                var open = css.indexOf('{', i);
+                if (open === -1 || open >= end) {
+                    if (emitAll) outParts.push(css.slice(i, end));
+                    break;
+                }
+                var atRule = css.slice(atStart, open).trim();
+                var close = findMatchingBrace(css, open);
+                if (emitAll) {
+                    outParts.push(css.slice(atStart, open + 1));
+                    walkCssBlocks(css, open + 1, close - 1, true, outParts);
+                    outParts.push('}');
+                } else {
+                    var nested = [];
+                    walkCssBlocks(css, open + 1, close - 1, false, nested);
+                    if (nested.length) {
+                        outParts.push(atRule + '{' + nested.join('\n') + '}');
+                    }
+                }
+                i = close;
+                continue;
+            }
+
+            var ruleOpen = css.indexOf('{', i);
+            if (ruleOpen === -1 || ruleOpen >= end) {
+                if (emitAll) outParts.push(css.slice(i, end));
+                break;
+            }
+
+            var selector = css.slice(i, ruleOpen);
+            var ruleClose = findMatchingBrace(css, ruleOpen);
+            var block = css.slice(ruleOpen + 1, ruleClose - 1);
+
+            if (containsMaskDecl(block)) {
+                if (emitAll) {
+                    outParts.push(
+                        selector + '{' + patchBlockMaskDeclarations(block) + '}'
+                    );
+                } else {
+                    var maskOnly = extractMaskDeclarationsOnly(block);
+                    if (maskOnly) {
+                        outParts.push(selector + '{' + maskOnly + '}');
+                    }
+                }
+            } else if (emitAll) {
+                outParts.push(css.slice(i, ruleClose));
+            }
+
+            i = ruleClose;
+        }
+    }
+
+    function extractSupplementalMaskStylesheet(css) {
+        if (!shouldPatchCssText(css)) {
+            return '';
+        }
+
+        var parts = [];
+        walkCssBlocks(css, 0, css.length, false, parts);
+        return parts.join('\n');
+    }
+
+    function rebuildCssWithPatchedMaskBlocks(css) {
+        if (!css || !containsMaskDecl(css)) {
+            return css;
+        }
+
+        var parts = [];
+        walkCssBlocks(css, 0, css.length, true, parts);
+        return parts.join('');
+    }
+
+    function addWebkitPrefixToText(css) {
+        if (!css || !containsMaskDecl(css)) {
+            return css;
+        }
+        if (containsLayer(css)) {
+            return css;
+        }
+        return rebuildCssWithPatchedMaskBlocks(css);
+    }
+
     (function patchCSSStyleSheet() {
-        const origInsertRule = CSSStyleSheet.prototype.insertRule;
+        var origInsertRule = CSSStyleSheet.prototype.insertRule;
         CSSStyleSheet.prototype.insertRule = function (rule, index) {
             try {
-                if (typeof rule === 'string' && /\bmask/.test(rule)) {
-                    const patched = addWebkitPrefixToText(rule);
+                if (typeof rule === 'string' && containsMaskDecl(rule)) {
+                    var patched = patchCssRuleText(rule);
                     dbg('insertRule intercepted, patching:', rule, '->', patched);
                     return origInsertRule.call(this, patched, index);
                 }
@@ -97,11 +255,11 @@
             return origInsertRule.call(this, rule, index);
         };
 
-        const origAddRule = CSSStyleSheet.prototype.addRule;
+        var origAddRule = CSSStyleSheet.prototype.addRule;
         CSSStyleSheet.prototype.addRule = function (selector, style, index) {
             try {
-                if (typeof style === 'string' && /\bmask/.test(style)) {
-                    const patched = addWebkitPrefixToText(style);
+                if (typeof style === 'string' && containsMaskDecl(style)) {
+                    var patched = patchBlockMaskDeclarations(style);
                     dbg('addRule intercepted, patching:', style, '->', patched);
                     return origAddRule.call(this, selector, patched, index);
                 }
@@ -112,12 +270,12 @@
         };
 
         if (CSSStyleSheet.prototype.replace) {
-            const origReplace = CSSStyleSheet.prototype.replace;
+            var origReplace = CSSStyleSheet.prototype.replace;
             CSSStyleSheet.prototype.replace = function (cssText) {
                 try {
-                    if (typeof cssText === 'string' && /\bmask/.test(cssText)) {
-                        const patched = addWebkitPrefixToText(cssText);
-                        dbg('replace intercepted, patching:', cssText.slice(0, 100), '->', patched.slice(0, 100));
+                    if (typeof cssText === 'string' && shouldPatchCssText(cssText)) {
+                        var patched = addWebkitPrefixToText(cssText);
+                        dbg('replace intercepted, patching');
                         return origReplace.call(this, patched);
                     }
                 } catch (e) {
@@ -128,12 +286,12 @@
         }
 
         if (CSSStyleSheet.prototype.replaceSync) {
-            const origReplaceSync = CSSStyleSheet.prototype.replaceSync;
+            var origReplaceSync = CSSStyleSheet.prototype.replaceSync;
             CSSStyleSheet.prototype.replaceSync = function (cssText) {
                 try {
-                    if (typeof cssText === 'string' && /\bmask/.test(cssText)) {
-                        const patched = addWebkitPrefixToText(cssText);
-                        dbg('replaceSync intercepted, patching:', cssText.slice(0, 100), '->', patched.slice(0, 100));
+                    if (typeof cssText === 'string' && shouldPatchCssText(cssText)) {
+                        var patched = addWebkitPrefixToText(cssText);
+                        dbg('replaceSync intercepted, patching');
                         return origReplaceSync.call(this, patched);
                     }
                 } catch (e) {
@@ -144,90 +302,106 @@
         }
     })();
 
-    // ---- CSSStyleDeclaration prototype patching ----
-    // Intercept inline styles set via CSSOM (e.g. element.style.maskImage = ... or setProperty)
     (function patchCSSStyleDeclaration() {
         if (window.__pfHookPrototype) {
             window.__pfHookPrototype(
                 CSSStyleDeclaration.prototype,
-                "setProperty",
+                'setProperty',
                 function (orig, prop, val, priority) {
-                    if (prop.startsWith("mask")) {
-                        const wprop = "-webkit-" + prop;
-                        orig.call(this, wprop, val, priority);
+                    if (
+                        prop.indexOf('mask') === 0 &&
+                        prop.indexOf('-webkit-') !== 0
+                    ) {
+                        orig.call(this, '-webkit-' + prop, val, priority);
                     }
                     return orig.call(this, prop, val, priority);
                 }
             );
         } else {
-            const origSetProperty = CSSStyleDeclaration.prototype.setProperty;
+            var origSetProperty = CSSStyleDeclaration.prototype.setProperty;
             CSSStyleDeclaration.prototype.setProperty = function (prop, val, priority) {
-                if (prop.startsWith('mask')) {
-                    const wprop = '-webkit-' + prop;
-                    origSetProperty.call(this, wprop, val, priority);
+                if (
+                    prop.indexOf('mask') === 0 &&
+                    prop.indexOf('-webkit-') !== 0
+                ) {
+                    origSetProperty.call(this, '-webkit-' + prop, val, priority);
                 }
                 return origSetProperty.call(this, prop, val, priority);
             };
         }
-
-        // Define getters/setters for all camelCase properties on style declarations
-        for (const prop of MASK_PROPS) {
-            const camel = prop.replace(/-([a-z])/g, (g) => g[1].toUpperCase());
-            Object.defineProperty(CSSStyleDeclaration.prototype, camel, {
-                get: function () {
-                    return this.getPropertyValue(prop);
-                },
-                set: function (val) {
-                    this.setProperty(prop, val);
-                },
-                configurable: true,
-                enumerable: true
-            });
-        }
     })();
 
-    // ---- <style> and <link> element processing ----
-    const processedStyleNodes = new WeakMap();
-    const processedLinks = new WeakMap();
+    var processedStyleNodes = new WeakMap();
+    var processedLinks = new WeakMap();
+    var supplementNodes = new WeakMap();
 
     function isPolyfillInjectedStyle(node) {
         return !!(
             node &&
-            (node.getAttribute("data-css-layers-polyfill") != null ||
-                node.getAttribute("data-color-mix-polyfill") != null ||
-                (node.id && node.id.indexOf("css-layers-src-") === 0) ||
-                (node.id && node.id.indexOf("oklch-") === 0) ||
-                (node.id && node.id.indexOf("patched-") === 0) ||
-                (node.id && node.id.indexOf("color-mix-") === 0))
+            (node.getAttribute('data-css-layers-polyfill') != null ||
+                node.getAttribute('data-color-mix-polyfill') != null ||
+                node.getAttribute('data-webkit-mask-polyfill') != null ||
+                (node.id && node.id.indexOf('css-layers-src-') === 0) ||
+                (node.id && node.id.indexOf('oklch-') === 0) ||
+                (node.id && node.id.indexOf('patched-') === 0) ||
+                (node.id && node.id.indexOf('mask-supplement-') === 0) ||
+                (node.id && node.id.indexOf('color-mix-') === 0))
         );
+    }
+
+    function injectSupplementalMaskStyle(anchor, css) {
+        if (!anchor || !anchor.parentNode || !css) {
+            return;
+        }
+
+        var existing = supplementNodes.get(anchor);
+        if (existing && existing.parentNode) {
+            if (existing.textContent === css) {
+                return;
+            }
+            existing.textContent = css;
+            dbg('  updated supplemental mask stylesheet for', anchor.id || anchor.tagName);
+            return;
+        }
+
+        var styleNode = document.createElement('style');
+        styleNode.setAttribute('data-webkit-mask-polyfill', '');
+        styleNode.textContent = css;
+        if (anchor.id) {
+            styleNode.id = 'mask-supplement-' + anchor.id;
+        }
+        anchor.parentNode.insertBefore(styleNode, anchor.nextSibling);
+        supplementNodes.set(anchor, styleNode);
+        dbg('  injected supplemental mask stylesheet for', anchor.id || anchor.tagName);
     }
 
     function processStyleNode(node) {
         if (!node || node.tagName !== 'STYLE' || isPolyfillInjectedStyle(node)) return;
-        const nodeLabel = node.id ? '#' + node.id : (node.className || '<style>');
-        const txt = node.textContent;
+
+        var txt = node.textContent;
         if (processedStyleNodes.get(node) === txt) return;
         processedStyleNodes.set(node, txt);
 
-        if (txt && /(?:^|[;{])\s*(?:-webkit-)?mask(?:-(?:image|size|repeat|position|origin|clip|composite|mode))?\s*:/m.test(txt)) {
-            const patched = addWebkitPrefixToText(txt);
-            if (patched !== txt) {
-                dbg('  textContent patched for style node:', nodeLabel);
-                processedStyleNodes.set(node, patched);
-                node.textContent = patched;
-            }
+        if (containsLayer(txt)) {
+            dbg('  skipping @layer style node (css-layers polyfill owns this sheet)');
+            return;
+        }
+
+        var supplemental = extractSupplementalMaskStylesheet(txt);
+        if (supplemental) {
+            injectSupplementalMaskStyle(node, supplemental);
         }
     }
 
     function fetchStylesheetText(href) {
-        const cache = window.__pfFetchCache;
+        var cache = window.__pfFetchCache;
         if (cache) {
             if (!cache.has(href)) {
                 cache.set(
                     href,
                     fetch(href)
                         .then(function (res) {
-                            if (!res.ok) throw new Error("status " + res.status);
+                            if (!res.ok) throw new Error('status ' + res.status);
                             return res.text();
                         })
                         .catch(function (err) {
@@ -240,94 +414,78 @@
         }
         return fetch(href)
             .then(function (res) {
-                if (!res.ok) throw new Error("status " + res.status);
+                if (!res.ok) throw new Error('status ' + res.status);
                 return res.text();
             });
     }
 
     function processLinkNode(link) {
-        if (!link || link.tagName !== 'LINK' || link.rel !== 'stylesheet' || !link.href) return;
+        if (!link || link.tagName !== 'LINK' || link.rel !== 'stylesheet' || !link.href) {
+            return;
+        }
         if (processedLinks.get(link) === link.href) return;
         processedLinks.set(link, link.href);
 
-        const href = link.href;
+        var href = link.href;
         dbg('processLinkNode: fetching stylesheet:', href);
         fetchStylesheetText(href)
             .then(function (css) {
-                if (/@layer/i.test(css)) {
+                if (containsLayer(css)) {
                     dbg('  skipping link with @layer (css-layers polyfill owns this sheet):', href);
                     return;
                 }
-                if (/\bmask/.test(css)) {
-                    const patched = addWebkitPrefixToText(css);
-                    if (patched !== css) {
-                        dbg('  successfully patched and replaced link stylesheet:', href);
-                        const styleNode = document.createElement('style');
-                        styleNode.textContent = patched;
-                        if (link.id) styleNode.id = 'patched-' + link.id;
-                        link.parentNode.insertBefore(styleNode, link.nextSibling);
-                        link.disabled = true;
-                    } else {
-                        dbg('  no mask properties needing patch in link:', href);
-                    }
-                } else {
-                    dbg('  no mask pattern in link stylesheet:', href);
+                var supplemental = extractSupplementalMaskStylesheet(css);
+                if (!supplemental) {
+                    dbg('  no mask declarations needing patch in link:', href);
+                    return;
                 }
+                injectSupplementalMaskStyle(link, supplemental);
             })
-            .catch(err => {
+            .catch(function (err) {
                 dbg('  failed to patch link stylesheet', href, ':', err.message);
             });
     }
 
-    // ---- Inline style attribute intercept (setAttribute) ----
     (function setupAttributeInterception() {
         if (!window.__pfHookPrototype) return;
         window.__pfHookPrototype(
             Element.prototype,
-            "setAttribute",
+            'setAttribute',
             function (orig, name, value) {
                 orig.call(this, name, value);
-                if (name === "style" && typeof value === "string" && /\bmask/.test(value)) {
-                    dbg(
-                        "setAttribute intercepted mask style on",
-                        this.tagName,
-                        ":",
-                        value.slice(0, 80)
-                    );
+                if (name === 'style' && typeof value === 'string' && containsMaskDecl(value)) {
                     try {
-                        const parsed = addWebkitPrefixToText(value);
+                        var parsed = patchBlockMaskDeclarations(value);
                         if (parsed !== value) {
-                            return orig.call(this, "style", parsed);
+                            return orig.call(this, 'style', parsed);
                         }
                     } catch (_) {}
                 }
             }
         );
-        dbg("setAttribute monkeypatch installed");
+        dbg('setAttribute monkeypatch installed');
     })();
 
-    // ---- Shadow DOM support ----
-    const observedRoots = new WeakSet();
+    var observedRoots = new WeakSet();
 
     function observeMutations(root) {
         if (observedRoots.has(root)) return;
         observedRoots.add(root);
 
-        const obs = new MutationObserver(function (mutations) {
-            for (const m of mutations) {
-                if (m.type === 'childList') {
-                    for (const node of m.addedNodes) {
-                        if (node.nodeType !== 1) continue;
-                        if (node.tagName === 'STYLE') {
-                            processStyleNode(node);
-                        } else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
-                            processLinkNode(node);
-                        } else {
-                            const innerStyles = node.querySelectorAll && node.querySelectorAll('style');
-                            if (innerStyles && innerStyles.length) innerStyles.forEach(processStyleNode);
-
-                            const innerLinks = node.querySelectorAll && node.querySelectorAll('link[rel="stylesheet"]');
-                            if (innerLinks && innerLinks.length) innerLinks.forEach(processLinkNode);
+        var obs = new MutationObserver(function (mutations) {
+            for (var m = 0; m < mutations.length; m++) {
+                if (mutations[m].type !== 'childList') continue;
+                for (var n = 0; n < mutations[m].addedNodes.length; n++) {
+                    var node = mutations[m].addedNodes[n];
+                    if (node.nodeType !== 1) continue;
+                    if (node.tagName === 'STYLE') {
+                        processStyleNode(node);
+                    } else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
+                        processLinkNode(node);
+                    } else {
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('style').forEach(processStyleNode);
+                            node.querySelectorAll('link[rel="stylesheet"]').forEach(processLinkNode);
                         }
                     }
                 }
@@ -344,7 +502,7 @@
             root.shadowRoot.querySelectorAll('link[rel="stylesheet"]').forEach(processLinkNode);
             scanShadowRoots(root.shadowRoot);
         }
-        let child = root.firstElementChild;
+        var child = root.firstElementChild;
         while (child) {
             scanShadowRoots(child);
             child = child.nextElementSibling;
@@ -352,11 +510,10 @@
     }
 
     (function patchShadowDOM() {
-        const origAttachShadow = Element.prototype.attachShadow;
+        var origAttachShadow = Element.prototype.attachShadow;
         Element.prototype.attachShadow = function (init) {
-            const shadow = origAttachShadow.call(this, init);
+            var shadow = origAttachShadow.call(this, init);
             try {
-                dbg('attachShadow intercepted, setting up observer');
                 observeMutations(shadow);
             } catch (e) {
                 dbg('attachShadow setup failed:', e.message);
@@ -365,7 +522,6 @@
         };
     })();
 
-    // ---- Main Scan ----
     function processAll() {
         dbg('processAll: scanning DOM style/link elements');
         document.querySelectorAll('style').forEach(processStyleNode);
@@ -373,42 +529,39 @@
         scanShadowRoots(document.documentElement);
     }
 
-    // ---- Mutation listener ----
     function setupMutationListener() {
-        if (window.__pfRegisterMutationListener) {
-            dbg('registering with shared mutation hub');
-            window.__pfRegisterMutationListener(function (mutations) {
-                // Shared hub handles main DOM mutations
-                for (const m of mutations) {
-                    if (m.type === 'childList') {
-                        for (const node of m.addedNodes) {
-                            if (node.nodeType !== 1) continue;
-                            if (node.tagName === 'STYLE') {
-                                processStyleNode(node);
-                            } else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
-                                processLinkNode(node);
-                            } else {
-                                const innerStyles = node.querySelectorAll && node.querySelectorAll('style');
-                                if (innerStyles && innerStyles.length) innerStyles.forEach(processStyleNode);
-
-                                const innerLinks = node.querySelectorAll && node.querySelectorAll('link[rel="stylesheet"]');
-                                if (innerLinks && innerLinks.length) innerLinks.forEach(processLinkNode);
-                            }
-                        }
-                    } else if (
-                        m.type === 'attributes' &&
-                        m.target.tagName === 'LINK' &&
-                        m.target.rel === 'stylesheet' &&
-                        (m.attributeName === 'href' || m.attributeName === 'rel')
-                    ) {
-                        processLinkNode(m.target);
-                    }
-                }
-            });
-        } else {
-            dbg('WARNING: shared hub not found, creating own MutationObserver');
+        if (!window.__pfRegisterMutationListener) {
             observeMutations(document);
+            return;
         }
+
+        dbg('registering with shared mutation hub');
+        window.__pfRegisterMutationListener(function (mutations) {
+            for (var m = 0; m < mutations.length; m++) {
+                var mutation = mutations[m];
+                if (mutation.type === 'childList') {
+                    for (var n = 0; n < mutation.addedNodes.length; n++) {
+                        var node = mutation.addedNodes[n];
+                        if (node.nodeType !== 1) continue;
+                        if (node.tagName === 'STYLE') {
+                            processStyleNode(node);
+                        } else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
+                            processLinkNode(node);
+                        } else if (node.querySelectorAll) {
+                            node.querySelectorAll('style').forEach(processStyleNode);
+                            node.querySelectorAll('link[rel="stylesheet"]').forEach(processLinkNode);
+                        }
+                    }
+                } else if (
+                    mutation.type === 'attributes' &&
+                    mutation.target.tagName === 'LINK' &&
+                    mutation.target.rel === 'stylesheet' &&
+                    (mutation.attributeName === 'href' || mutation.attributeName === 'rel')
+                ) {
+                    processLinkNode(mutation.target);
+                }
+            }
+        });
     }
 
     processAll();

@@ -31,6 +31,7 @@ static dispatch_queue_t blacklistCacheQueue;
         defaultScriptBlacklists = [NSMutableDictionary dictionary];
         defaultScriptBlacklists[@"regexp.min.js"] = [NSMutableSet setWithArray:@[
             @"americanexpress.com",
+            @"amtrak.com",
             @"duck.ai",
         ]];
         

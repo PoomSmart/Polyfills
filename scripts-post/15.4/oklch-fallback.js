@@ -937,6 +937,30 @@
         return out;
     }
 
+    function isPolyfillManagedStyle(node) {
+        if (!node || node.tagName !== "STYLE") return true;
+        if (node.getAttribute("data-color-mix-polyfill") != null) return true;
+        if (node.getAttribute("data-webkit-mask-polyfill") != null) return true;
+        if (node.getAttribute("data-webkit-backdrop-polyfill") != null) return true;
+        const id = node.id || "";
+        if (id.indexOf("css-layers-src-") === 0) return true;
+        if (id.indexOf("oklch-") === 0) return true;
+        if (id.indexOf("mask-supplement-") === 0) return true;
+        if (id.indexOf("backdrop-supplement-") === 0) return true;
+        if (id.indexOf("patched-") === 0) return true;
+        if (id === "oklch-themed-custom-props") return true;
+        if (id === "color-mix-cascade-overrides") return true;
+        return false;
+    }
+
+    function isRawLayerStyle(node) {
+        if (!node || node.getAttribute("data-css-layers-polyfill") != null) {
+            return false;
+        }
+        const txt = node.textContent;
+        return !!(txt && /@layer/i.test(txt));
+    }
+
     function patchColorMixInStylesheets() {
         const root = document.documentElement;
         const vars = getColorMixLocalVars();
@@ -945,7 +969,8 @@
         let pending = 0;
         for (let n = 0; n < nodes.length; n++) {
             const node = nodes[n];
-            if (node.id === "oklch-themed-custom-props") continue;
+            if (isPolyfillManagedStyle(node)) continue;
+            if (isRawLayerStyle(node)) continue;
             const txt = node.textContent;
             if (!node.dataset.pfColorMixOrig) {
                 if (!txt || !/color-mix\s*\(/i.test(txt)) continue;
@@ -2044,11 +2069,15 @@
     }
 
     function processStyleTagNode(styleNode) {
+        if (!styleNode || styleNode.__oklchProcessed) {
+            return;
+        }
         if (
-            !styleNode ||
-            styleNode.__oklchProcessed ||
-            styleNode.getAttribute("data-css-layers-polyfill")
+            styleNode.getAttribute("data-css-layers-polyfill") ||
+            isPolyfillManagedStyle(styleNode) ||
+            isRawLayerStyle(styleNode)
         ) {
+            styleNode.__oklchProcessed = true;
             return;
         }
         const txt = styleNode.textContent;

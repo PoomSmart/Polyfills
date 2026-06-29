@@ -13,7 +13,12 @@
         const detectProperty = options.detectProperty || properties[0];
         const detectValue = options.detectValue || "none";
 
-        const propPattern = properties
+        // Longest names first so "mask-image" wins over "mask".
+        const sortedProperties = properties.slice().sort(function (a, b) {
+            return b.length - a.length;
+        });
+
+        const propPattern = sortedProperties
             .map(function (p) {
                 return escapeRegex(p);
             })
@@ -44,6 +49,9 @@
                 const prefixChar = match.trim().charAt(0);
                 const prefix =
                     prefixChar === ";" || prefixChar === "{" ? prefixChar : "";
+                if (options.webkitOnly) {
+                    return prefix + " -webkit-" + prop + ": " + val;
+                }
                 return (
                     prefix +
                     " " +

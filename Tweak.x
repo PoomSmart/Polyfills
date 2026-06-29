@@ -721,7 +721,7 @@ static const void *InjectedKey = &InjectedKey;
         HBLogDebug(@"Polyfills: Skipping regex match enumeration for empty string");
         return;
     }
-    %orig(string, options, range, block);
+    %orig;
 }
 
 %end
