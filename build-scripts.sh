@@ -550,3 +550,32 @@ if [ -s "$BABEL_FAILURES_FILE" ]; then
     exit 1
 fi
 rm -f "$BABEL_FAILURES_FILE"
+
+# Validate that every built script parses as ES5. Scripts are concatenated into
+# a single WKUserScript per injection time, so one ES2015+ file makes the whole
+# bundle fail to compile on old engines (e.g. iOS 8's JavaScriptCore), which
+# then reports "Script error. at :0:0" in every frame. acorn (ecmaVersion 5) is
+# the gate that catches such regressions before packaging.
+echo ""
+echo "Validating ES5 compatibility of built scripts (iOS 8 parser)..."
+ES5_VALIDATOR_RESULT=0
+node -e '
+  var acorn;
+  try { acorn = require("acorn"); } catch (e) {
+    console.warn("  \u26a0 acorn not installed; skipping ES5 validation (run: npm install)");
+    process.exit(0);
+  }
+  var fs = require("fs"), path = require("path");
+  var base = process.argv[1];
+  var dirs = ["scripts", "scripts-priority", "scripts-post"];
+  function walk(d){var r=[];if(!fs.existsSync(d))return r;fs.readdirSync(d,{withFileTypes:true}).forEach(function(e){var p=path.join(d,e.name);if(e.isDirectory())r=r.concat(walk(p));else if(e.name.slice(-3)===".js")r.push(p);});return r;}
+  var fails=[];
+  dirs.forEach(function(dir){walk(path.join(base,dir)).forEach(function(f){try{acorn.parse(fs.readFileSync(f,"utf8"),{ecmaVersion:5});}catch(e){fails.push("  \u2717 "+path.relative(base,f)+" \u2014 "+e.message);}});});
+  if(fails.length){console.error("ES5 validation FAILED ("+fails.length+" file(s) not parseable on iOS 8):");console.error(fails.join("\n"));process.exit(1);}
+  console.log("  \u2713 All built scripts parse as ES5");
+' "$TARGET_BASE" || ES5_VALIDATOR_RESULT=1
+
+if [ "$ES5_VALIDATOR_RESULT" != "0" ]; then
+    echo "Build failed: one or more built scripts are not ES5-compatible (would break iOS 8)."
+    exit 1
+fi
