@@ -18,10 +18,12 @@
  *     ├── base/                   # Base post-scripts for all iOS versions
  *     └── 15.4/, 16.4/           # Version-specific post-scripts (auto-discovered)
  *
- * JavaScript files (.js) in each directory are loaded alphabetically.
- * Version directories are auto-discovered and sorted in ascending order.
- * Version-specific directories are only loaded if the current iOS
- * version is older than the directory version (e.g. 15.4/ loads on iOS < 15.4).
+ * Injection order (each step is one WKUserScript bundle per injection time):
+ *   Document start: blacklist bootstrap → scripts-priority → scripts
+ *   Document end:   blacklist bootstrap (only if start bundle empty) → scripts-post
+ *
+ * Blacklist bootstrap = runtime `window.__pfBL` JSON (from prefs) + A_blacklist.js.
+ * Each polyfill file is wrapped with a __pfShouldRun(name) guard in Tweak.x.
  */
 
 #define CHECK_TARGET
@@ -181,6 +183,7 @@ static NSString *loadJSFromDirectory(NSString *directoryPath) {
     NSSet *disabledSet = disabledScriptsSet();
 
     for (NSString *fileName in jsFiles) {
+        if ([fileName isEqualToString:@"A_blacklist.js"]) continue;
         if (disabledSet && [disabledSet containsObject:fileName.lowercaseString]) continue;
         NSString *filePath = [directoryPath stringByAppendingPathComponent:fileName];
         NSString *content = loadJSFromFile(filePath);
@@ -205,7 +208,7 @@ static NSString *getPolyfillsBasePath() {
     return PS_ROOT_PATH_NS(@"/Library/Application Support/Polyfills");
 }
 
-static NSString *buildBlacklistPrelude(void) {
+static NSString *buildBlacklistDataPrelude(void) {
     NSArray *globalBlacklist = [PolyfillsBlacklistManager mergedGlobalBlacklist];
     NSDictionary *blacklistDict = [PolyfillsBlacklistManager mergedScriptBlacklists];
 
@@ -224,53 +227,34 @@ static NSString *buildBlacklistPrelude(void) {
     NSString *json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
     if (!json) json = @"{}";
 
-    NSMutableString *p = [NSMutableString string];
-    [p appendString:@"(function(){\n"];
-    [p appendString:@"var __pfBL = "];
-    [p appendString:json];
-    [p appendString:@";\n"];
-    [p appendString:@"window.__pfShouldRun = function(script){\n"];
-    [p appendString:@"  var orig=script;\n"];
-    [p appendString:@"  script=String(script||'').toLowerCase();\n"];
-    [p appendString:@"  var h=location.hostname.toLowerCase();\n"];
-    [p appendString:@"  var path=location.pathname;\n"];
-    [p appendString:@"  function matchesDomain(e){\n"];
-    [p appendString:@"    if(!e)return false;\n"];
-    [p appendString:@"    e=String(e).toLowerCase();\n"];
-    [p appendString:@"    var slash=e.indexOf('/');\n"];
-    [p appendString:@"    if(slash<0){\n"];
-    [p appendString:@"      return h===e||h.endsWith('.'+e);\n"];
-    [p appendString:@"    }else{\n"];
-    [p appendString:@"      var host=e.substring(0,slash);\n"];
-    [p appendString:@"      var pref=e.substring(slash+1);\n"];
-    [p appendString:@"      if(h===host||h.endsWith('.'+host)){\n"];
-    [p appendString:@"        var prefPath='/'+pref.replace(/^\\/+/,'');\n"];
-    [p appendString:@"        return path===prefPath||path.startsWith(prefPath+(prefPath.endsWith('/')?'':'/'));\n"];
-    [p appendString:@"      }\n"];
-    [p appendString:@"    }\n"];
-    [p appendString:@"    return false;\n"];
-    [p appendString:@"  }\n"];
-    [p appendString:@"  var globalArr=__pfBL['*'];\n"];
-    [p appendString:@"  if(globalArr&&globalArr.length){\n"];
-    [p appendString:@"    for(var i=0;i<globalArr.length;i++){\n"];
-    [p appendString:@"      if(matchesDomain(globalArr[i])){\n"];
-    [p appendString:@"        try{console.log('[Polyfills] Skipped '+orig+' (global blacklist)');}catch(_){}\n"];
-    [p appendString:@"        return false;\n"];
-    [p appendString:@"      }\n"];
-    [p appendString:@"    }\n"];
-    [p appendString:@"  }\n"];
-    [p appendString:@"  var arr=__pfBL[script];\n"];
-    [p appendString:@"  if(!arr||!arr.length)return true;\n"];
-    [p appendString:@"  for(var i=0;i<arr.length;i++){\n"];
-    [p appendString:@"    if(matchesDomain(arr[i])){\n"];
-    [p appendString:@"      try{console.log('[Polyfills] Skipped '+orig+' (script blacklist)');}catch(_){}\n"];
-    [p appendString:@"      return false;\n"];
-    [p appendString:@"    }\n"];
-    [p appendString:@"  }\n"];
-    [p appendString:@"  return true;\n"];
-    [p appendString:@"};\n"];
-    [p appendString:@"})();\n"];
-    return p;
+    return [NSString stringWithFormat:@"window.__pfBL=%@;\n", json];
+}
+
+static NSString *loadBlacklistBootstrapScript(void) {
+    NSString *path = [getPolyfillsBasePath() stringByAppendingPathComponent:@"scripts-priority/base/A_blacklist.js"];
+    NSString *runner = loadJSFromFile(path);
+    if (!runner.length) {
+        HBLogDebug(@"Polyfills: blacklist runner not found at path: %@", path);
+        return buildBlacklistDataPrelude();
+    }
+
+    NSMutableString *bootstrap = [NSMutableString string];
+    NSString *dataPrelude = buildBlacklistDataPrelude();
+    if (dataPrelude.length > 0) {
+        [bootstrap appendString:dataPrelude];
+    }
+    [bootstrap appendString:runner];
+    if (![bootstrap hasSuffix:@"\n"]) {
+        [bootstrap appendString:@"\n"];
+    }
+    return [bootstrap copy];
+}
+
+static void prependBlacklistBootstrap(NSMutableString *bundle) {
+    NSString *bootstrap = loadBlacklistBootstrapScript();
+    if (bootstrap.length > 0) {
+        [bundle insertString:bootstrap atIndex:0];
+    }
 }
 
 static void buildCombinedScriptBundles(void) {
@@ -295,13 +279,10 @@ static void buildCombinedScriptBundles(void) {
         [combinedEndScripts appendString:postScripts];
     }
 
-    NSString *prelude = buildBlacklistPrelude();
-    if (prelude) {
-        if (combinedStartScripts.length > 0) {
-            [combinedStartScripts insertString:prelude atIndex:0];
-        } else if (combinedEndScripts.length > 0) {
-            [combinedEndScripts insertString:prelude atIndex:0];
-        }
+    if (combinedStartScripts.length > 0) {
+        prependBlacklistBootstrap(combinedStartScripts);
+    } else if (combinedEndScripts.length > 0) {
+        prependBlacklistBootstrap(combinedEndScripts);
     }
 
     cachedCombinedStartScripts = [combinedStartScripts copy];
