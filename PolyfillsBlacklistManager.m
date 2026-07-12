@@ -33,6 +33,7 @@ static dispatch_queue_t blacklistCacheQueue;
             @"americanexpress.com",
             @"amtrak.com",
             @"duck.ai",
+            @"geeksforgeeks.org",
         ]];
         
         runtimeUABlacklist = [NSMutableSet set];
