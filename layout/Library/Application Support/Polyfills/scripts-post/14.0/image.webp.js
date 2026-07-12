@@ -1,0 +1,1 @@
+!function(){var e;function n(){e.polyfillDocument()}"undefined"!=typeof window&&window.webpHero&&window.webpHero.WebpMachine&&(e=new window.webpHero.WebpMachine,document.body?n():document.addEventListener("DOMContentLoaded",n))}();
