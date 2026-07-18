@@ -1,15 +1,8 @@
 #!/bin/bash
-
-# Script to build and optimize polyfill scripts for packaging
-# This processes all scripts from ./scripts, ./scripts-priority and ./scripts-post, transpiles and minifies them
-# for optimal package size and runtime performance
-#
 # Usage: ./build-scripts.sh [--force]
-#   --force: Force rebuild all files regardless of whether they've changed
 
 set -e
 
-# Parse command line arguments
 FORCE_REBUILD=false
 if [[ "$1" == "--force" ]]; then
     FORCE_REBUILD=true
@@ -39,7 +32,6 @@ if [ -f "$BUILD_STAMP" ]; then
 fi
 echo "$CURRENT_BUILD_STAMP" >"$BUILD_STAMP"
 
-# Set UglifyJS options based on DEBUG environment variable
 if [ "$DEBUG" = "1" ]; then
     UGLIFY_COMPRESS="arrows=false,global_defs={DEBUG:true}"
     echo "Debug build: keeping debug logs"
@@ -48,7 +40,6 @@ else
     echo "Release build: stripping debug logs"
 fi
 
-# Function to get file checksum for change detection
 get_file_checksum() {
     local file_path="$1"
     if [ -f "$file_path" ]; then
@@ -108,63 +99,52 @@ restore_artifact() {
     return 0
 }
 
-# Function to check if file has changed since last build
 file_has_changed() {
     local source_file="$1"
     local target_file="$2"
 
-    # If force rebuild is enabled, always return true
     if [ "$FORCE_REBUILD" = true ]; then
         return 0
     fi
 
-    # If target doesn't exist, file needs processing
     if [ ! -f "$target_file" ]; then
         return 0
     fi
 
-    # Get current checksum
     local current_checksum
     current_checksum=$(cache_key_for_source "$source_file")
 
-    # Get cached checksum
     local cached_checksum=""
     if [ -f "$CACHE_FILE" ]; then
         cached_checksum=$(grep "^$source_file:" "$CACHE_FILE" | cut -d':' -f2-)
     fi
 
-    # Compare checksums
     if [ "$current_checksum" != "$cached_checksum" ]; then
-        return 0 # File has changed
+        return 0
     fi
 
-    # Source unchanged for this mode — reuse saved artifact when available.
     local artifact_file
     artifact_file=$(artifact_path_for_target "$target_file")
     if [ ! -f "$artifact_file" ]; then
         return 0
     fi
 
-    return 1 # File unchanged
+    return 1
 }
 
-# Function to update cache with file checksum and persist built output for this mode
 update_cache() {
     local source_file="$1"
     local target_file="${2:-}"
     local checksum
     checksum=$(cache_key_for_source "$source_file")
 
-    # Create cache file if it doesn't exist
     touch "$CACHE_FILE"
 
-    # Remove old entry if exists
     if [ -f "$CACHE_FILE" ]; then
         grep -v "^$source_file:" "$CACHE_FILE" >"$CACHE_FILE.tmp" || true
         mv "$CACHE_FILE.tmp" "$CACHE_FILE"
     fi
 
-    # Add new entry
     echo "$source_file:$checksum" >>"$CACHE_FILE"
 
     if [ -n "$target_file" ] && [ -f "$target_file" ]; then
@@ -172,7 +152,6 @@ update_cache() {
     fi
 }
 
-# Function to clean up orphaned files (files that exist in target but not in source)
 cleanup_orphaned_files() {
     local source_dir="$1"
     local target_dir="$2"
@@ -184,26 +163,20 @@ cleanup_orphaned_files() {
 
     echo "Cleaning up orphaned files in $dir_name..."
 
-    # Find all JS files in target directory
     find "$target_dir" -name "*.js" -type f | while IFS= read -r target_file; do
         local relative_path="${target_file#$target_dir/}"
         local source_file=""
 
-        # Map target file back to source file location
-        if [[ "$relative_path" == base/* ]]; then
-            # Files in base folder come from root level of source
+            if [[ "$relative_path" == base/* ]]; then
             source_file="$source_dir/${relative_path#base/}"
         else
-            # Files in subdirectories
             source_file="$source_dir/$relative_path"
         fi
 
-        # If corresponding source file doesn't exist, remove the target file
         if [ ! -f "$source_file" ]; then
             echo "  🗑 Removing orphaned file: $relative_path"
             rm -f "$target_file"
 
-            # Also remove from cache and artifact store if present
             if [ -f "$CACHE_FILE" ]; then
                 grep -v "^$source_file:" "$CACHE_FILE" >"$CACHE_FILE.tmp" || true
                 mv "$CACHE_FILE.tmp" "$CACHE_FILE"
@@ -216,42 +189,34 @@ cleanup_orphaned_files() {
         fi
     done
 
-    # Remove empty directories
     find "$target_dir" -type d -empty -delete || true
 }
 
-# Function to copy file only if it doesn't exist in target or has changed
 copy_if_needed() {
     local source_file="$1"
     local target_file="$2"
     local target_dir=$(dirname "$target_file")
 
-    # Create target directory if it doesn't exist
     mkdir -p "$target_dir"
 
-    # If target doesn't exist, copy it
     if [ ! -f "$target_file" ]; then
         cp "$source_file" "$target_file"
         return 0
     fi
 
-    # If force rebuild is enabled, always copy
     if [ "$FORCE_REBUILD" = true ]; then
         cp "$source_file" "$target_file"
         return 0
     fi
 
-    # Check if source file has changed
     if file_has_changed "$source_file" "$target_file"; then
         cp "$source_file" "$target_file"
         return 0
     fi
 
-    # File hasn't changed, don't copy
     return 1
 }
 
-# Function to copy directory structure intelligently
 copy_directory_structure() {
     local source_dir="$1"
     local target_dir="$2"
@@ -263,27 +228,22 @@ copy_directory_structure() {
 
     echo "Copying $dir_name structure..."
 
-    # Create target directory
     mkdir -p "$target_dir"
 
-    # Copy directory structure (non-JS files and directories)
     find "$source_dir" -type d | while IFS= read -r dir; do
         local relative_dir="${dir#$source_dir/}"
-        if [ "$relative_dir" != "$dir" ]; then # Skip the root directory
+        if [ "$relative_dir" != "$dir" ]; then
             mkdir -p "$target_dir/$relative_dir"
         fi
     done
 
-    # Copy non-JS files
     find "$source_dir" -type f ! -name "*.js" | while IFS= read -r file; do
         local relative_file="${file#$source_dir/}"
         copy_if_needed "$file" "$target_dir/$relative_file"
     done
 
-    # Create base directory
     mkdir -p "$target_dir/base"
 
-    # Handle JS files
     find "$source_dir" -maxdepth 1 -name "*.js" -type f | while IFS= read -r js_file; do
         local filename=$(basename "$js_file")
         local target_file="$target_dir/base/$filename"
@@ -293,7 +253,6 @@ copy_directory_structure() {
         fi
     done
 
-    # Handle JS files in subdirectories
     find "$source_dir" -mindepth 2 -name "*.js" -type f | while IFS= read -r js_file; do
         local relative_file="${js_file#$source_dir/}"
         local target_file="$target_dir/$relative_file"
@@ -303,7 +262,6 @@ copy_directory_structure() {
         fi
     done
 
-    # Remove disabled files
     find "$target_dir" -name "*.disabled" -delete || true
 }
 process_js_folder() {
@@ -314,7 +272,6 @@ process_js_folder() {
         return 0
     fi
 
-    # Check if there are any JS files to process
     local js_files
     js_files=$(find "$folder_path" -maxdepth 1 -name "*.js" -type f)
 
@@ -325,25 +282,20 @@ process_js_folder() {
 
     echo "Processing folder: $folder_name"
 
-    # Check for npx command once per folder (we may still copy files without transpilation)
     local HAS_NPX=1
     if ! command -v npx &>/dev/null; then
         HAS_NPX=0
         echo "  Warning: npx not found. Will copy without transpile/minify for $folder_name" >&2
     fi
 
-    # Process each JS file in the folder
     echo "$js_files" | while IFS= read -r js_file; do
         local filename=$(basename "$js_file")
 
-        # Find corresponding source file to check for changes
         local source_file=""
         local relative_path="${js_file#$TARGET_BASE/}"
 
-        # Determine source file path based on target location
         if [[ "$relative_path" == scripts-priority/* ]]; then
             local sub_path="${relative_path#scripts-priority/}"
-            # Handle base folder mapping (base/file.js -> file.js)
             if [[ "$sub_path" == base/* ]]; then
                 source_file="$SOURCE_SCRIPTS_PRIORITY/${sub_path#base/}"
             else
@@ -351,7 +303,6 @@ process_js_folder() {
             fi
         elif [[ "$relative_path" == scripts-post/* ]]; then
             local sub_path="${relative_path#scripts-post/}"
-            # Handle base folder mapping (base/file.js -> file.js)
             if [[ "$sub_path" == base/* ]]; then
                 source_file="$SOURCE_SCRIPTS_POST/${sub_path#base/}"
             else
@@ -359,7 +310,6 @@ process_js_folder() {
             fi
         elif [[ "$relative_path" == scripts/* ]]; then
             local sub_path="${relative_path#scripts/}"
-            # Handle base folder mapping (base/file.js -> file.js)
             if [[ "$sub_path" == base/* ]]; then
                 source_file="$SOURCE_SCRIPTS/${sub_path#base/}"
             else
@@ -367,13 +317,11 @@ process_js_folder() {
             fi
         fi
 
-        # Check skip-transform directive
         local skip_transform=0
         if head -n 5 "$js_file" | grep -q "@polyfills-prebuilt: skip-transform"; then
             skip_transform=1
         fi
 
-        # Check if file has changed (restore cached artifact when unchanged)
         if [ -n "$source_file" ] && ! file_has_changed "$source_file" "$js_file"; then
             if restore_artifact "$js_file"; then
                 echo "  ↻ Restored: $filename (artifact cache)"
@@ -385,7 +333,6 @@ process_js_folder() {
 
         if [ "$skip_transform" -eq 1 ]; then
             if [ "$HAS_NPX" -eq 1 ]; then
-                # Prebuilt: transpile to iOS 8 using project config in PREBUILT mode, then minify
                 local temp_js_transpiled
                 local temp_js_minified
                 temp_js_transpiled=$(mktemp)
@@ -418,7 +365,6 @@ process_js_folder() {
                         echo "  ⚠ ES5 only: $filename (uglify failed)"
                     fi
                 else
-                    # Fallback: minify only
                     if npx uglifyjs "$js_file" "${UGLIFY_ARGS[@]}"; then
                         cp "$temp_js_minified" "$js_file"
                         echo "  ✓ Minified only: $filename (prebuilt, no babel plugins)"
@@ -426,12 +372,10 @@ process_js_folder() {
                         echo "  ⚠ Skipped transforms: $filename (prebuilt, no babel/uglify)"
                     fi
                 fi
-                # Update cache if we have source file
                 if [ -n "$source_file" ]; then
                     update_cache "$source_file" "$js_file"
                 fi
             else
-                # No npx, leave file as-is but update cache
                 echo "  ⤴ Skipped transforms: $filename (prebuilt, no npx)"
                 if [ -n "$source_file" ]; then
                     update_cache "$source_file" "$js_file"
@@ -455,28 +399,22 @@ process_js_folder() {
                 UGLIFY_ARGS=(--compress "$UGLIFY_COMPRESS" "${UGLIFY_ARGS[@]}")
             fi
 
-            # Local trap for temp files
             trap 'rm -f "$temp_js_transpiled" "$temp_js_minified"; trap - RETURN EXIT INT TERM' RETURN EXIT INT TERM
 
-            # Transpile with Babel
             if npx babel "$js_file" -o "$temp_js_transpiled"; then
                 apply_debug_flags "$temp_js_transpiled"
-                # Minify with UglifyJS
                 if npx uglifyjs "$temp_js_transpiled" "${UGLIFY_ARGS[@]}"; then
                     cp "$temp_js_minified" "$js_file"
                     echo "  ✓ Processed: $filename (transpiled + minified)"
 
-                    # Update cache if we have source file
-                    if [ -n "$source_file" ]; then
+                        if [ -n "$source_file" ]; then
                         update_cache "$source_file" "$js_file"
                     fi
                 else
-                    # Minification failed, use transpiled version
                     cp "$temp_js_transpiled" "$js_file"
                     echo "  ⚠ Transpiled only: $filename (minification failed)"
 
-                    # Update cache if we have source file
-                    if [ -n "$source_file" ]; then
+                        if [ -n "$source_file" ]; then
                         update_cache "$source_file" "$js_file"
                     fi
                 fi
@@ -485,7 +423,6 @@ process_js_folder() {
                 echo "1" >> "$BABEL_FAILURES_FILE"
             fi
 
-            # Cleanup handled by trap
         fi
     done
 
@@ -493,19 +430,16 @@ process_js_folder() {
     return 0
 }
 
-# Create target directories
 BABEL_FAILURES_FILE="${TARGET_BASE}/.babel-failures"
 : > "$BABEL_FAILURES_FILE"
 mkdir -p "$TARGET_BASE/scripts"
 mkdir -p "$TARGET_BASE/scripts-post"
 mkdir -p "$TARGET_BASE/scripts-priority"
 
-# Copy directory structures intelligently
 copy_directory_structure "$SOURCE_SCRIPTS" "$TARGET_BASE/scripts" "scripts"
 copy_directory_structure "$SOURCE_SCRIPTS_PRIORITY" "$TARGET_BASE/scripts-priority" "scripts-priority"
 copy_directory_structure "$SOURCE_SCRIPTS_POST" "$TARGET_BASE/scripts-post" "scripts-post"
 
-# Clean up orphaned files (files that were moved or deleted from source)
 cleanup_orphaned_files "$SOURCE_SCRIPTS" "$TARGET_BASE/scripts" "scripts"
 cleanup_orphaned_files "$SOURCE_SCRIPTS_PRIORITY" "$TARGET_BASE/scripts-priority" "scripts-priority"
 cleanup_orphaned_files "$SOURCE_SCRIPTS_POST" "$TARGET_BASE/scripts-post" "scripts-post"
@@ -513,21 +447,18 @@ cleanup_orphaned_files "$SOURCE_SCRIPTS_POST" "$TARGET_BASE/scripts-post" "scrip
 echo ""
 echo "Building and optimizing JavaScript files with Babel and UglifyJS..."
 
-# Process all folders in scripts directory (excluding root level)
 if [ -d "$TARGET_BASE/scripts" ]; then
     find "$TARGET_BASE/scripts" -mindepth 1 -type d | while IFS= read -r folder; do
         process_js_folder "$folder"
     done
 fi
 
-# Process all folders in scripts-priority directory (excluding root level)
 if [ -d "$TARGET_BASE/scripts-priority" ]; then
     find "$TARGET_BASE/scripts-priority" -mindepth 1 -type d | while IFS= read -r folder; do
         process_js_folder "$folder"
     done
 fi
 
-# Process all folders in scripts-post directory (excluding root level)
 if [ -d "$TARGET_BASE/scripts-post" ]; then
     find "$TARGET_BASE/scripts-post" -mindepth 1 -type d | while IFS= read -r folder; do
         process_js_folder "$folder"
@@ -551,11 +482,6 @@ if [ -s "$BABEL_FAILURES_FILE" ]; then
 fi
 rm -f "$BABEL_FAILURES_FILE"
 
-# Validate that every built script parses as ES5. Scripts are concatenated into
-# a single WKUserScript per injection time, so one ES2015+ file makes the whole
-# bundle fail to compile on old engines (e.g. iOS 8's JavaScriptCore), which
-# then reports "Script error. at :0:0" in every frame. acorn (ecmaVersion 5) is
-# the gate that catches such regressions before packaging.
 echo ""
 echo "Validating ES5 compatibility of built scripts (iOS 8 parser)..."
 ES5_VALIDATOR_RESULT=0

@@ -1,29 +1,8 @@
 /*
- * Polyfills Tweak - Filesystem-based JavaScript injection with async loading
- *
- * This tweak loads JavaScript polyfills dynamically from the filesystem
- * instead of embedding them in header files. This allows for easier
- * management and user customization of polyfills.
- *
- * Performance: Scripts are loaded asynchronously at tweak initialization
- * and cached in memory for fast injection into WKWebViews.
- *
- * Directory structure: /Library/Application Support/Polyfills/
- * ├── scripts/                    # Injected at document start
- * │   ├── base/                   # Base scripts for all iOS versions
- * │   ├── 9.0/                   # Scripts for iOS < 9.0
- * │   ├── 10.0/                  # Scripts for iOS < 10.0
- * │   └── ...                    # Other version directories (auto-discovered)
- * └── scripts-post/               # Injected at document end
- *     ├── base/                   # Base post-scripts for all iOS versions
- *     └── 15.4/, 16.4/           # Version-specific post-scripts (auto-discovered)
- *
- * Injection order (each step is one WKUserScript bundle per injection time):
+ * Injection order (one WKUserScript bundle per injection time):
  *   Document start: blacklist bootstrap → scripts-priority → scripts
  *   Document end:   blacklist bootstrap (only if start bundle empty) → scripts-post
- *
- * Blacklist bootstrap = runtime `window.__pfBL` JSON (from prefs) + A_blacklist.js.
- * Each polyfill file is wrapped with a __pfShouldRun(name) guard in Tweak.x.
+ * Blacklist bootstrap = `window.__pfBL` JSON + A_blacklist.js; each file wrapped with __pfShouldRun.
  */
 
 #define CHECK_TARGET
@@ -98,7 +77,6 @@ static void rememberPendingUserAgentURL(WKWebView *webView, NSURL *url) {
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-// Helper function to load JavaScript content from a file
 static NSString *loadJSFromFile(NSString *filePath) {
     if (![[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
         HBLogDebug(@"Polyfills: JS file not found at path: %@", filePath);
@@ -115,7 +93,6 @@ static NSString *loadJSFromFile(NSString *filePath) {
     return content;
 }
 
-// Helper function to escape a filename for safe embedding in generated JS
 static NSString *jsEscapedString(NSString *string) {
     if (!string) return @"\"\"";
     NSData *data = [NSJSONSerialization dataWithJSONObject:@[string] options:0 error:nil];
@@ -127,12 +104,10 @@ static NSString *jsEscapedString(NSString *string) {
     return @"\"\"";
 }
 
-// Global variables for script loading
 static dispatch_queue_t scriptLoadingQueue;
 static NSString *cachedCombinedStartScripts = nil;
 static NSString *cachedCombinedEndScripts = nil;
 
-// Cached disabled-script set; rebuilt when preferences change.
 static NSSet *cachedDisabledScripts = nil;
 
 static NSSet *disabledScriptsSet(void) {
@@ -160,7 +135,6 @@ static void invalidateScriptBundleCache(void) {
 
 static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsDir);
 
-// Helper function to concatenate all JS files in a directory
 static NSString *loadJSFromDirectory(NSString *directoryPath) {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     if (![fileManager fileExistsAtPath:directoryPath]) {
@@ -175,7 +149,6 @@ static NSString *loadJSFromDirectory(NSString *directoryPath) {
         return @"";
     }
 
-    // Filter for .js files and sort them
     NSArray *jsFiles = [[files filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"pathExtension == 'js'"]]
                        sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
 
@@ -194,7 +167,6 @@ static NSString *loadJSFromDirectory(NSString *directoryPath) {
             NSString *js = [NSString stringWithFormat:@"window.__injectedHardwareConcurrency__ = %ld;", (long)clamped];
             content = [js stringByAppendingString:content];
         }
-        // Wrap every script with a guard that consults window.__pfShouldRun(scriptName)
         NSString *escapedName = jsEscapedString(fileName);
         NSString *wrapped = [NSString stringWithFormat:@"(function(n){try{if(window.__pfShouldRun && !window.__pfShouldRun(n)) return;}catch(e){}\n%@\n})(%@);\n", content, escapedName];
         [combinedScript appendString:wrapped];
@@ -203,7 +175,6 @@ static NSString *loadJSFromDirectory(NSString *directoryPath) {
     return [combinedScript copy];
 }
 
-// Helper function to get base polyfills directory path
 static NSString *getPolyfillsBasePath() {
     return PS_ROOT_PATH_NS(@"/Library/Application Support/Polyfills");
 }
@@ -297,13 +268,11 @@ static void ensureScriptsLoaded(void) {
     });
 }
 
-// Helper function to load scripts for a specific iOS version or older
 static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsDir) {
     NSString *fullBasePath = [basePath stringByAppendingPathComponent:scriptsDir];
 
     NSMutableString *combinedScripts = [NSMutableString string];
 
-    // Load base scripts (always included)
     NSString *baseScriptsPath = [fullBasePath stringByAppendingPathComponent:@"base"];
     NSString *baseScripts = loadJSFromDirectory(baseScriptsPath);
     if (baseScripts.length > 0) {
@@ -311,7 +280,6 @@ static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsD
         [combinedScripts appendString:@"\n"];
     }
 
-    // Dynamically discover version directories
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSError *error;
     NSArray *allItems = [fileManager contentsOfDirectoryAtPath:fullBasePath error:&error];
@@ -320,7 +288,6 @@ static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsD
         return [combinedScripts copy];
     }
 
-    // Filter for version directories (directories that match version pattern like "9.0", "10.1", etc.)
     NSMutableArray *versionDirs = [NSMutableArray array];
     NSRegularExpression *versionRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d+\\.\\d+$" options:0 error:nil];
 
@@ -334,7 +301,6 @@ static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsD
         }
     }
 
-    // Sort version directories in ascending order (9.0, 10.0, 10.1, etc.)
     [versionDirs sortUsingComparator:^NSComparisonResult(NSString *version1, NSString *version2) {
         NSArray *components1 = [version1 componentsSeparatedByString:@"."];
         NSArray *components2 = [version2 componentsSeparatedByString:@"."];
@@ -356,13 +322,11 @@ static NSString *loadScriptsForIOSVersion(NSString *basePath, NSString *scriptsD
         return NSOrderedSame;
     }];
 
-    // Load scripts from version directories if current iOS version is older
     for (NSString *versionStr in versionDirs) {
         NSArray *components = [versionStr componentsSeparatedByString:@"."];
         NSInteger vMajor = [components[0] integerValue];
         NSInteger vMinor = components.count > 1 ? [components[1] integerValue] : 0;
 
-        // If current iOS version is less than this polyfill version, include it
         if (isIOSVersionOrNewer(vMajor, vMinor)) continue;
         NSString *versionPath = [fullBasePath stringByAppendingPathComponent:versionStr];
         NSString *versionScripts = loadJSFromDirectory(versionPath);
@@ -383,7 +347,6 @@ static NSString *getFinalUA(NSString *defaultUA) {
     NSString *spoofedVersion = @"16_3";
     NSString *spoofedSafariVersion = @"Version/16.3";
     NSError *regexError = nil;
-    // Capture major & minor (ignore patch) from "OS major_minor(_patch)" pattern
     NSRegularExpression *osCaptureRegex = [NSRegularExpression regularExpressionWithPattern:@"OS (\\d+?)_(\\d+)(?:_\\d+)?" options:0 error:&regexError];
     if (regexError) {
         HBLogDebug(@"Polyfills Regex error: %@", regexError.localizedDescription);
@@ -403,7 +366,6 @@ static NSString *getFinalUA(NSString *defaultUA) {
     }
 
     if (shouldSpoof) {
-        // Replace the OS version fragment
         NSRegularExpression *osReplaceRegex = [NSRegularExpression regularExpressionWithPattern:@"OS \\d+_\\d+(?:_\\d+)?" options:0 error:nil];
         finalUA = [osReplaceRegex stringByReplacingMatchesInString:finalUA options:0 range:NSMakeRange(0, finalUA.length) withTemplate:[NSString stringWithFormat:@"OS %@", spoofedVersion]];
         // Keep Safari version spoof tied to OS spoof to avoid inconsistencies
@@ -494,7 +456,6 @@ static void overrideUserAgent(WKWebView *webView) {
     applyDefaultUserAgentOverride(webView);
 }
 
-// Function to load and inject scripts synchronously from the prebuilt bundle cache
 static void loadAndInjectScriptsImmediately(WKUserContentController *controller) {
     ensureScriptsLoaded();
 

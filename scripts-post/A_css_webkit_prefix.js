@@ -1,5 +1,4 @@
-// Shared helper for duplicating unprefixed CSS properties to -webkit- equivalents.
-// Used by property-specific polyfills (mask-image, backdrop-filter, etc.).
+// Helper to duplicate unprefixed CSS properties to -webkit- equivalents.
 (function setupWebkitPrefixHelper() {
     if (window.__pfCreateWebkitPropertyPatcher) return;
 
@@ -84,9 +83,4 @@
             return css;
         };
     }
-    // if (!window.__pfPatchContentVisibilityInCSS) {
-    //     window.__pfPatchContentVisibilityInCSS = function (css) {
-    //         return css;
-    //     };
-    // }
 })();

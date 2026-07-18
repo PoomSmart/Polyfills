@@ -1,6 +1,4 @@
-// Runtime blacklist gate for per-script polyfill loading.
-// Tweak.x prepends `window.__pfBL = {...}` when preferences define blacklists,
-// then injects this file once before all polyfills (document start or end).
+// Runtime blacklist gate; Tweak.x may prepend window.__pfBL before this runs.
 (function () {
     function stringEndsWith(str, suffix) {
         var idx = str.length - suffix.length;

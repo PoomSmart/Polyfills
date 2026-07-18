@@ -8,7 +8,6 @@ static inline NSString *PFSecRulesDir(void) {
     return [PS_ROOT_PATH_NS(@"/Library/Application Support/Polyfills") stringByAppendingPathComponent:@"sec-rules"];
 }
 
-// Rules index loaded from all files: exact host -> rule dict, suffix (no leading dot) -> rule dict
 static NSDictionary<NSString *, NSDictionary *> *s_rulesExact;
 static NSDictionary<NSString *, NSDictionary *> *s_rulesSuffix;
 static void _PFEnsureRulesLoaded(void) {
@@ -30,7 +29,7 @@ static void _PFEnsureRulesLoaded(void) {
         NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
         if (!content) continue;
 
-        __block NSString *currentPattern = base; // default to file name
+        __block NSString *currentPattern = base;
         __block NSMutableDictionary *current = [NSMutableDictionary dictionaryWithCapacity:3];
 
         void (^flush)(void) = ^{
@@ -164,7 +163,7 @@ NS_AVAILABLE_IOS(11.0)
         });
 
         if (!stillActive) {
-            return; // Task was cancelled
+            return;
         }
 
         void (^deliver)(void) = ^{
@@ -238,7 +237,6 @@ NS_AVAILABLE_IOS(11.0)
 %end
 
 %ctor {
-    // Activate only on iOS 11.0 through 16.3 and when the preference is enabled
     if (!IS_IOS_OR_NEWER(iOS_11_0) || IS_IOS_OR_NEWER(iOS_16_4)) return;
     if (!_PFHeaderInjectionEnabled()) return;
     %init;

@@ -1,5 +1,3 @@
-// For LLM: Ignore header import issues
-
 #import <PSHeader/Misc.h>
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
@@ -9,7 +7,6 @@
 #import <UIKit/UIKit.h>
 #import <HBLog.h>
 
-// Simple logging helper
 #define PFPrefsLog(fmt, ...) HBLogDebug(@"[PolyfillsPrefs] " fmt, ##__VA_ARGS__)
 
 static NSString *PFBasePath(void) {
@@ -20,7 +17,6 @@ static NSArray *PFScriptDirs(void) {
     return @[ @"scripts-priority", @"scripts", @"scripts-post" ];
 }
 
-// Recursively locate first UITextField in a view hierarchy
 static UITextField *PFLocateTextField(UIView *root) {
     if ([root isKindOfClass:[UITextField class]])
         return (UITextField *)root;
@@ -36,17 +32,17 @@ static UITextField *PFLocateTextField(UIView *root) {
 @end
 
 @interface PolyfillsGlobalBlacklistController : PSListController <UITextFieldDelegate>
-@property(nonatomic, strong) NSMutableArray *domains; // mutable list of lowercase domains
+@property(nonatomic, strong) NSMutableArray *domains;
 @end
 
 @interface PolyfillsUserAgentBlacklistController : PSListController <UITextFieldDelegate>
-@property(nonatomic, strong) NSMutableArray *domains; // mutable list of lowercase domains
+@property(nonatomic, strong) NSMutableArray *domains;
 @end
 
 @interface PolyfillsScriptBlacklistController : PSListController <UITextFieldDelegate>
-@property(nonatomic, strong) NSString *scriptName;               // lowercase
-@property(nonatomic, strong) NSMutableArray *domains;            // mutable list of lowercase domains
-@property(nonatomic, strong) NSMutableDictionary *allBlacklists; // script -> domains array
+@property(nonatomic, strong) NSString *scriptName;
+@property(nonatomic, strong) NSMutableArray *domains;
+@property(nonatomic, strong) NSMutableDictionary *allBlacklists;
 @end
 
 @interface PolyfillsCustomUserAgentsController : PSListController
@@ -61,8 +57,8 @@ static UITextField *PFLocateTextField(UIView *root) {
 @end
 
 @implementation PolyfillsRootListController {
-    NSMutableSet *_disabledScripts;   // lowercase
-    NSMutableDictionary *_blacklists; // script -> domains
+    NSMutableSet *_disabledScripts;
+    NSMutableDictionary *_blacklists;
 }
 
 - (void)loadPrefs {
@@ -114,7 +110,6 @@ static UITextField *PFLocateTextField(UIView *root) {
         [en setProperty:@YES forKey:@"default"];
         [specs addObject:en];
 
-        // Group for Spoof User Agent toggle
         PSSpecifier *uaGrp = [PSSpecifier preferenceSpecifierNamed:@"Spoof User Agent"
                                                             target:self
                                                                set:NULL
@@ -178,10 +173,9 @@ static UITextField *PFLocateTextField(UIView *root) {
 
         NSOperatingSystemVersion osv = [[NSProcessInfo processInfo] operatingSystemVersion];
         // iOS version gate: show only on iOS 11.0 - 16.3 inclusive
-        BOOL showHeaderToggle = (osv.majorVersion == 11 || osv.majorVersion > 11) && // >=11
+        BOOL showHeaderToggle = (osv.majorVersion == 11 || osv.majorVersion > 11) &&
                                 ((osv.majorVersion < 16) || (osv.majorVersion == 16 && osv.minorVersion <= 3));
         if (showHeaderToggle) {
-            // Group for Header Injection toggle with explanatory footer
             PSSpecifier *hiGrp = [PSSpecifier preferenceSpecifierNamed:@"Header Injection"
                                                                 target:self
                                                                    set:NULL
@@ -206,7 +200,6 @@ static UITextField *PFLocateTextField(UIView *root) {
             [specs addObject:hi];
         }
 
-        // Global Blacklist section
         PSSpecifier *globalBlGrp = [PSSpecifier preferenceSpecifierNamed:@"Global Blacklist"
                                                                   target:self
                                                                      set:NULL
@@ -217,7 +210,6 @@ static UITextField *PFLocateTextField(UIView *root) {
         [globalBlGrp setProperty:@"Disable all polyfills for specific websites." forKey:@"footerText"];
         [specs addObject:globalBlGrp];
         
-        // Load global blacklist to show count
         CFArrayRef globalBL = (CFArrayRef)CFPreferencesCopyAppValue(globalBlacklistKey, domain);
         NSUInteger globalBlCount = 0;
         if (globalBL && CFGetTypeID(globalBL) == CFArrayGetTypeID()) {
@@ -247,7 +239,6 @@ static UITextField *PFLocateTextField(UIView *root) {
         [scriptsGrp setProperty:@"Fine-tune individual scripts for specific websites (advanced)." forKey:@"footerText"];
         [specs addObject:scriptsGrp];
 
-        // Collect script metadata first so we can sort by version threshold.
         NSMutableArray *entries = [NSMutableArray array];
         NSFileManager *fm = [NSFileManager defaultManager];
         NSRegularExpression *verRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d+\\.\\d+$"
@@ -289,7 +280,7 @@ static UITextField *PFLocateTextField(UIView *root) {
                 BOOL currentIsOlder =
                     (osv.majorVersion < vMajor) || (osv.majorVersion == vMajor && osv.minorVersion < vMinor);
                 if (!currentIsOlder)
-                    continue; // skip inactive dirs
+                    continue;
                 NSString *verDir = [topPath stringByAppendingPathComponent:sub];
                 for (NSString *f in [fm contentsOfDirectoryAtPath:verDir error:nil])
                     if ([f hasSuffix:@".js"]) {
@@ -326,12 +317,10 @@ static UITextField *PFLocateTextField(UIView *root) {
               return aMin < bMin ? NSOrderedAscending : NSOrderedDescending;
           return [a[@"label"] caseInsensitiveCompare:b[@"label"]];
         }];
-        // Build specifiers in sorted order, each script in its own group.
         for (NSDictionary *entry in entries) {
-            NSString *label = entry[@"label"]; // May include version suffix
+            NSString *label = entry[@"label"];
             NSString *script = entry[@"script"];
             NSUInteger blCount = [entry[@"blCount"] unsignedIntegerValue];
-            // Group header for this script
             PSSpecifier *scriptGroup = [PSSpecifier preferenceSpecifierNamed:label
                                                                       target:self
                                                                          set:NULL
@@ -340,7 +329,6 @@ static UITextField *PFLocateTextField(UIView *root) {
                                                                         cell:PSGroupCell
                                                                         edit:Nil];
             [specs addObject:scriptGroup];
-            // Toggle
             PSSpecifier *tog = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
                                                               target:self
                                                                  set:@selector(setScriptEnabled:specifier:)
@@ -350,7 +338,6 @@ static UITextField *PFLocateTextField(UIView *root) {
                                                                 edit:Nil];
             [tog setProperty:script forKey:@"scriptName"];
             [specs addObject:tog];
-            // Blacklist link
             NSString *blLabel = [NSString stringWithFormat:@"Blacklist (%lu)", (unsigned long)blCount];
             PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:blLabel
                                                                target:self
@@ -855,7 +842,6 @@ static UITextField *PFLocateTextField(UIView *root) {
 }
 
 - (UITableView *)_tableView {
-    // Try common patterns, fallback to scanning subviews.
     if ([self respondsToSelector:@selector(table)]) {
         UITableView *t = [self performSelector:@selector(table)];
         if ([t isKindOfClass:[UITableView class]])
@@ -876,7 +862,7 @@ static UITextField *PFLocateTextField(UIView *root) {
         [cell respondsToSelector:@selector(specifier)] ? [cell performSelector:@selector(specifier)] : nil;
     UITextField *tf = PFLocateTextField(cell.contentView ?: cell);
     if (!spec && !tf)
-        return; // nothing to commit
+        return;
     if (!spec) {
         PFPrefsLog(@"_commitCell: no specifier for cell class=%@", NSStringFromClass(cell.class));
         return;
@@ -890,7 +876,7 @@ static UITextField *PFLocateTextField(UIView *root) {
             [self.domains addObject:vLower];
             if (tf)
                 tf.text = @"";
-            [spec setProperty:@"" forKey:@"value"]; // reset Add Domain field
+            [spec setProperty:@"" forKey:@"value"];
             // Persist BEFORE rebuilding so specifiers() picks up new domains.
             [self persist];
             _specifiers = nil; // Force full rebuild to avoid row mismatch
@@ -913,7 +899,6 @@ static UITextField *PFLocateTextField(UIView *root) {
     for (UITableViewCell *cell in tv.visibleCells) {
         [self _commitCell:cell];
     }
-    // Offscreen: attempt to load and commit every specifier that might have a text field (link cells excluded)
     for (PSSpecifier *spec in _specifiers) {
         if ([spec cellType] == PSEditTextCell) {
             UITableViewCell *cell = [self cachedCellForSpecifier:spec];
@@ -924,7 +909,6 @@ static UITextField *PFLocateTextField(UIView *root) {
 }
 
 - (void)saveAndClose {
-    // Commit all edits (visible + offscreen) then persist.
     PFPrefsLog(@"saveAndClose initial domains=%@", self.domains);
     [self.view endEditing:YES];
     [self _commitAllEdits];
@@ -935,7 +919,6 @@ static UITextField *PFLocateTextField(UIView *root) {
 - (NSArray *)specifiers {
     if (!_specifiers) {
         self.scriptName = [[self.specifier propertyForKey:@"scriptName"] lowercaseString];
-        // load master dictionary
         CFPreferencesAppSynchronize(domain); // ensure latest values from other processes
         CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
         self.allBlacklists = [NSMutableDictionary dictionary];
@@ -959,7 +942,6 @@ static UITextField *PFLocateTextField(UIView *root) {
                   forKey:@"footerText"];
         [specs addObject:grp];
         for (NSString *d in self.domains) {
-            // Use a short bullet label; the text field already displays the domain value.
             PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
                                                             target:self
                                                                set:@selector(setDomain:specifier:)
@@ -1001,7 +983,7 @@ static UITextField *PFLocateTextField(UIView *root) {
             self.domains[idx] = v;
         else if (![self.domains containsObject:v])
             [self.domains addObject:v];
-        [spec setProperty:v forKey:@"value"]; // Keep bullet label constant
+        [spec setProperty:v forKey:@"value"];
     }
     [self persist];
 }
@@ -1011,8 +993,7 @@ static UITextField *PFLocateTextField(UIView *root) {
     PFPrefsLog(@"addDomain candidate=%@ script=%@ existing=%@", vLower, self.scriptName, self.domains);
     if (vLower.length && ![self.domains containsObject:vLower]) {
         [self.domains addObject:vLower];
-        NSInteger insertIndex = _specifiers.count - 1; // before Add Domain row
-        // Bullet label to avoid duplicate domain text
+        NSInteger insertIndex = _specifiers.count - 1;
         PSSpecifier *t = [PSSpecifier preferenceSpecifierNamed:@"•"
                                                         target:self
                                                            set:@selector(setDomain:specifier:)
@@ -1023,7 +1004,6 @@ static UITextField *PFLocateTextField(UIView *root) {
         [t setProperty:vLower forKey:@"value"];
         [_specifiers insertObject:t atIndex:insertIndex];
         [self insertSpecifier:t atIndex:insertIndex animated:YES];
-        // Reset the Add Domain row's value so user can add another without manual clearing.
         [spec setProperty:@"" forKey:@"value"];
         [self persist];
     }
@@ -1042,7 +1022,6 @@ static UITextField *PFLocateTextField(UIView *root) {
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // Reload in case another process or earlier controller instance updated preferences.
     CFPreferencesAppSynchronize(domain);
     CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
     NSMutableDictionary *latest = [NSMutableDictionary dictionary];
@@ -1056,7 +1035,6 @@ static UITextField *PFLocateTextField(UIView *root) {
     if (![updated isEqualToArray:self.domains]) {
         self.allBlacklists = latest;
         self.domains = [updated mutableCopy];
-        // Rebuild specifiers list only if counts differ
         _specifiers = nil;
         [self reloadSpecifiers];
         PFPrefsLog(@"Rebuilt specifiers for script=%@ newDomains=%@", self.scriptName, self.domains);

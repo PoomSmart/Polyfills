@@ -24,9 +24,7 @@ static dispatch_queue_t blacklistCacheQueue;
             @"youtube.com/tv",
         ]];
         
-        defaultGlobalBlacklist = [NSMutableSet setWithArray:@[
-            // Add things
-        ]];
+        defaultGlobalBlacklist = [NSMutableSet set];
         
         defaultScriptBlacklists = [NSMutableDictionary dictionary];
         defaultScriptBlacklists[@"regexp.min.js"] = [NSMutableSet setWithArray:@[

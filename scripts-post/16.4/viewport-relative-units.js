@@ -1,4 +1,3 @@
-// ChatGPT
 (function () {
     if (window.__viewportUnitPolyfillApplied) return;
     window.__viewportUnitPolyfillApplied = true;

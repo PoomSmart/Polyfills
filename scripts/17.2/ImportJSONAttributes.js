@@ -97,7 +97,6 @@ if (typeof window !== 'undefined' && !("importJsonModule" in window)) {
     window.importJsonModule = importJsonModule;
 
     if (typeof window.importScript === 'function' && !window.importScript.__jsonModules) {
-        // extend the existing window.importScript (from 15.2 import.js polyfill) to support  JSON imports
         const importScript = window.importScript;
         const importScriptWithJson = function (specifier, options) {
             if (hasJsonAttribute(options)) {

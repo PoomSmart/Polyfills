@@ -1,4 +1,3 @@
-// OKLCH -> RGB fallback for browsers without oklch() support
 (function polyfillOKLCHFallback() {
     var __PF_DEBUG__ = false;
     const LOG_PREFIX = "[oklch-fallback]";
@@ -35,9 +34,7 @@
     window.__oklchFallbackApplied = true;
     setupThemedCustomPropertyListeners();
 
-    // ---------- OKLCH parsing and conversion ----------
     function parseNumberWithUnit(token) {
-        // returns { value: number, unit: string }
         const m = String(token)
             .trim()
             .match(/^([+-]?(?:\d+\.\d+|\d*\.\d+|\d+))(.*)$/);
@@ -71,20 +68,17 @@
     }
 
     function linearToSRGB(x) {
-        // gamma companding
         return x <= 0.0031308
             ? 12.92 * x
             : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
     }
 
     function oklchToSRGB(Lp, C, Hdeg) {
-        // Convert OKLCH to sRGB (gamma-encoded), returns [R,G,B] in 0..1
         const hrad = ((Hdeg % 360) * Math.PI) / 180;
         const a = C * Math.cos(hrad);
         const b = C * Math.sin(hrad);
 
         const L = Lp; // already 0..1
-        // oklab -> LMS^3 per Björn Ottosson
         const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
         const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
         const s_ = L - 0.0894841775 * a - 1.291485548 * b;
@@ -116,14 +110,11 @@
     }
 
     function tryParseOKLCHArgs(argText) {
-        // Accepts formats like: "L% C H[deg|rad|grad|turn] / A"; numbers can be decimals
-        // Return { L01, C, Hdeg, alpha } or null when dynamic (var()/calc()) or invalid
         const txt = argText.trim();
         if (/var\(|calc\(|env\(/i.test(txt)) {
             return null;
         } // dynamic, skip
 
-        // Split by "/" for alpha
         const parts = txt.split("/");
         const main = parts[0].trim();
         const alphaRaw = parts[1] ? parts[1].trim() : null;
@@ -183,7 +174,6 @@
                 break;
             }
             out += input.slice(i, idx);
-            // Find matching ')' with nesting awareness
             let j = idx + 6; // after 'oklch('
             let depth = 1;
             while (j < input.length && depth > 0) {
@@ -201,7 +191,6 @@
                 const rgb = toRGBString(r, g, b, alpha);
                 out += rgb;
             } else {
-                // leave as-is when we cannot compute
                 out += input.slice(idx, j);
             }
             i = j;
@@ -209,12 +198,7 @@
         return out;
     }
 
-    // ---------- Generic dynamic fallback: evaluate oklch(var/calc/clamp) per element ----------
-    // This builds an index of same-origin CSS rules that set oklch(...) on color-related properties,
-    // matches them against elements, resolves var()/calc()/clamp() using getComputedStyle(el),
-    // computes sRGB, then applies the result inline to emulate support.
 
-    // Properties we handle
     const COLOR_PROPS = [
         "color",
         "background-color",
@@ -248,7 +232,6 @@
     }
 
     function splitTopLevelArgs(s) {
-        // Split by spaces or commas at depth 0
         const out = [];
         let buf = "";
         let depth = 0;
@@ -276,7 +259,6 @@
     }
 
     function resolveVar(el, chunk, localVars) {
-        // var(--name[, fallback])
         const m = chunk.match(/^var\(\s*([^,\s)]+)\s*(?:,\s*(.*))?\)$/i);
         if (!m) return null;
         const name = m[1];
@@ -288,7 +270,6 @@
             val = "";
         }
         val = String(val).trim();
-        // Text map is fallback when computed/custom props are not available yet.
         if (
             !val &&
             localVars &&
@@ -297,7 +278,6 @@
             val = String(localVars[name] || "").trim();
         }
         if (!val && fallback != null) return String(fallback).trim();
-        // Provide sane numeric defaults when missing
         if (!val) {
             const lname = name.toLowerCase();
             if (/(^|-)opacity/.test(lname) || /--opacity/.test(name)) return "1";
@@ -327,7 +307,6 @@
     }
 
     function evalArithmetic(expr) {
-        // Safe parser for numbers with + - * / and parentheses; supports e/E exponents
         const s = expr.replace(/\s+/g, "");
         let i = 0;
         function peek() {
@@ -393,10 +372,8 @@
     }
 
     function evalNumeric(el, token, kind, localVars) {
-        // kind: 'L' | 'C' | 'H' | 'A'
         let s = String(token).trim();
         if (!s) return NaN;
-        // Resolve nested calc()/clamp() and var()
         s = resolveVarsRecursive(el, s, 0, localVars);
 
         function parseUnitNum(t) {
@@ -405,7 +382,6 @@
             return { val: u.value, unit: (u.unit || "").toLowerCase() };
         }
 
-        // clamp(min, val, max)
         if (/^clamp\(/i.test(s)) {
             const inner = stripOuter(s, "clamp(", ")");
             const parts = [];
@@ -431,10 +407,8 @@
             return NaN;
         }
 
-        // calc(...)
         if (/^calc\(/i.test(s)) {
             const inner = stripOuter(s, "calc(", ")");
-            // Replace unit-bearing numbers into unitless based on kind
             const mapped = inner.replace(
                 /([+-]?(?:\d+\.\d+|\d*\.\d+|\d+))(deg|rad|turn|%|[a-zA-Z]+)?/g,
                 (_, num, unit) => {
@@ -452,7 +426,6 @@
                         if (u === "grad") return String(v * 0.9);
                         return String(v);
                     }
-                    // C: treat percent as fraction if given
                     if (kind === "C") {
                         if (u === "%") return String(v / 100);
                         return String(v);
@@ -463,7 +436,6 @@
             return evalArithmetic(mapped);
         }
 
-        // plain number with unit
         const pn = parseUnitNum(s);
         if (!isFinite(pn.val)) return NaN;
         if (kind === "L" || kind === "A") {
@@ -472,7 +444,6 @@
         if (kind === "H") {
             return hueToDeg(pn.val, pn.unit);
         }
-        // C
         if (pn.unit === "%") return pn.val / 100;
         return pn.val;
     }
@@ -496,7 +467,6 @@
     function computeOKLCHForElement(el, valueText, localVars) {
         const inner = parseOKLCHCall(valueText);
         if (!inner) return null;
-        // Split alpha
         const slash = inner.lastIndexOf("/");
         let main = (slash !== -1 ? inner.slice(0, slash) : inner).trim();
         let alphaRaw = slash !== -1 ? inner.slice(slash + 1).trim() : null;
@@ -510,10 +480,8 @@
         } catch (_) { }
         let tokens = splitTopLevelArgs(main);
         if (tokens.length < 3) {
-            // If still not enough tokens, bail
             return null;
         }
-        // Only use first three tokens for L C H
         const L = evalNumeric(el, tokens[0], "L", localVars);
         const C = evalNumeric(el, tokens[1], "C", localVars);
         const H = evalNumeric(el, tokens[2], "H", localVars);
@@ -999,7 +967,6 @@
     }
 
     function computeSpecificity(selector) {
-        // Very rough specificity calculator
         const s = selector.replace(/:not\(([^)]*)\)/g, "$1");
         const a = (s.match(/#[\w-]+/g) || []).length; // IDs
         const b =
@@ -1039,7 +1006,6 @@
                 for (let i = 0; i < list.length; i++) {
                     const r = list[i];
                     try {
-                        // Grouping rule with children
                         if (r && r.cssRules && r.cssRules.length) {
                             walk(r.cssRules);
                             continue;
@@ -1128,7 +1094,6 @@
 
     function applyIndexedRules() {
         if (!OKLCH_RULE_INDEX.length) return;
-        // For each element, pick the winning declaration per property
         const all = document.querySelectorAll("*");
         for (const el of all) {
             for (const prop of COLOR_PROPS) {
@@ -1144,7 +1109,6 @@
                         winner = entry;
                         continue;
                     }
-                    // Compare importance, specificity, then order (later wins)
                     if (entry.important !== winner.important) {
                         winner = entry.important ? entry : winner;
                         continue;
@@ -1204,7 +1168,6 @@
         applyIndexedRules();
     }
 
-    // --- Selector expansion and query fallback ---
     function splitTopLevelCommas(s) {
         const parts = [];
         let depth = 0,
@@ -1242,7 +1205,6 @@
     }
 
     function explodeSelectorFunctions(sel) {
-        // Expand :is() and :where() into multiple candidates recursively
         const queue = [sel];
         const out = new Set();
         while (queue.length) {
@@ -1269,7 +1231,6 @@
 
     function applyIndexedRulesByQuery() {
         if (!OKLCH_RULE_INDEX.length) return;
-        // Sort entries by sheet order
         const entries = OKLCH_RULE_INDEX.slice().sort(
             (a, b) => a.si - b.si || (a.oi || 0) - (b.oi || 0)
         );
@@ -1283,11 +1244,9 @@
                     const list = document.querySelectorAll(cand);
                     if (list && list.length) nodes.push(...list);
                 } catch (e) {
-                    // skip invalid candidate
                 }
             }
             if (!nodes.length) continue;
-            // Deduplicate nodes
             const seen = new Set();
             nodes = nodes.filter((n) => {
                 if (seen.has(n)) return false;
@@ -1302,7 +1261,6 @@
                 );
                 if (!rgb) continue;
                 try {
-                    // Preserve existing inline !important when present
                     const targetProp = mapPropToInline(entry.prop);
                     const existingImportant =
                         el.style.getPropertyPriority(targetProp) ===
@@ -1717,7 +1675,6 @@
         );
     }
 
-    // ---------- CSSOM traversal & mutation ----------
     const RULE = {
         STYLE: 1,
         MEDIA: 4,
@@ -1955,7 +1912,6 @@
                         style.setProperty(prop, mixed, priority);
                         changed = true;
                     } catch (_) {
-                        // ignore
                     }
                 }
                 continue;
@@ -1971,7 +1927,6 @@
                     style.setProperty(prop, newVal, priority);
                     changed = true;
                 } catch (_) {
-                    // ignore
                 }
             }
         }
@@ -2039,7 +1994,6 @@
                 anyChanged = processStyleDeclaration(rule.style) || anyChanged;
             }
 
-            // Grouping rules
             const childRules = rule.cssRules || null;
             if (childRules)
                 anyChanged = traverseAndFixRules(childRules) || anyChanged;
@@ -2122,7 +2076,6 @@
                 return true;
             }
         } catch (e) {
-            // Access denied: cross-origin; try fetching if possible below
             dbg(
                 "Cannot access cssRules for sheet; will try text/fetch path",
                 sheet.href || "[inline]",
@@ -2131,7 +2084,6 @@
             stats.errors++;
         }
 
-        // If rules not accessible or no changes (perhaps because declarations are dynamic), try text path
         const cssText = getStyleSheetText(sheet);
         if (cssText && cssText.toLowerCase().includes("oklch(")) {
             const processed = processCSSTextWithCSSOM(cssText);
@@ -2165,7 +2117,6 @@
 
     async function fetchAndInlineStylesheet(href) {
         const normalizedHref = normalizeStylesheetHref(href);
-        // Use shared fetch cache to avoid duplicate requests across polyfills
         const cache = window.__pfFetchCache;
         if (cache && !cache.has(normalizedHref)) {
             cache.set(normalizedHref, fetch(normalizedHref, { mode: "cors" })
@@ -2222,11 +2173,9 @@
         dbg("Processing stylesheets:", allSheets.length);
         for (const sheet of allSheets) {
             const href = sheet.href || "";
-            // Prefer in-place CSSOM edits when possible
             let handled = await processStyleSheetObject(sheet);
             if (handled) continue;
 
-            // Fallback: fetch same-origin or explicitly CORS-enabled links
             if (href) {
                 const abs = (() => {
                     try {
@@ -2243,7 +2192,6 @@
                 }
             }
         }
-        // Inline <style> tags text-based processing (covers cases not represented in CSSOM)
         document.querySelectorAll("style").forEach(processStyleTagNode);
 
         try {
@@ -2424,7 +2372,6 @@
         }
     }
 
-    // Observe dynamic additions/changes via the shared mutation hub.
     function setupMutationListener() {
         function handleMutations(mutations) {
             stats.observerEvents += mutations.length;

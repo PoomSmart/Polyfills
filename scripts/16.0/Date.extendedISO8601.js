@@ -1,4 +1,3 @@
-// ChatGPT
 (function () {
     const NativeDate = Date;
     const testDate = "2025-07-25 06:45:34.123+07:00";

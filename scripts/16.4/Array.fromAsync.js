@@ -1,4 +1,4 @@
-// https://github.com/es-shims/array-from-async and ChatGPT
+// https://github.com/es-shims/array-from-async
 (() => {
     if (typeof Array.fromAsync === 'function') return;
 

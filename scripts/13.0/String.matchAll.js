@@ -1,4 +1,3 @@
-// ChatGPT
 if (!String.prototype.matchAll) {
     String.prototype.matchAll = function (regexp) {
         if (regexp == null) {
@@ -12,14 +11,12 @@ if (!String.prototype.matchAll) {
         const global = regexp.global;
 
         if (!global) {
-            // If not global, match once and return a single-entry iterable
             const match = regexp.exec(str);
             return (function* () {
                 if (match) yield match;
             })();
         }
 
-        // If global, yield all matches
         const re = new RegExp(regexp.source, regexp.flags); // Clone RegExp
         re.lastIndex = 0;
 

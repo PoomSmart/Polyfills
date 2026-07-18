@@ -30,17 +30,14 @@ static inline BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
 
 @interface PolyfillsBlacklistManager : NSObject
 
-// Programmatic Registration of Defaults
 + (void)registerDefaultUserAgentBlacklistedWebsites:(NSArray<NSString *> *)websites;
 + (void)registerDefaultGlobalBlacklistedWebsites:(NSArray<NSString *> *)websites;
 + (void)registerDefaultBlacklistedWebsites:(NSArray<NSString *> *)websites forScript:(NSString *)scriptName;
 
-// Programmatic Additions at Runtime
 + (void)addUserAgentBlacklistedWebsites:(NSArray<NSString *> *)websites;
 + (void)addGlobalBlacklistedWebsites:(NSArray<NSString *> *)websites;
 + (void)addBlacklistedWebsites:(NSArray<NSString *> *)websites forScript:(NSString *)scriptName;
 
-// Retrieving Merged Blacklists
 + (NSArray<NSString *> *)mergedUserAgentBlacklist;
 + (NSArray<NSString *> *)mergedGlobalBlacklist;
 + (NSDictionary<NSString *, NSArray<NSString *> *> *)mergedScriptBlacklists;
@@ -53,13 +50,10 @@ void PFInvalidatePreferenceCaches(void);
 
 @interface PolyfillsUserAgentManager : NSObject
 
-// Programmatic Registration of Defaults
 + (void)registerDefaultCustomUserAgent:(NSString *)userAgent forWebsites:(NSArray<NSString *> *)websites;
 
-// Programmatic Additions at Runtime
 + (void)addCustomUserAgent:(NSString *)userAgent forWebsites:(NSArray<NSString *> *)websites;
 
-// Retrieve matched custom user agent for URL, or nil if none matches
 + (NSString *)customUserAgentForURL:(NSURL *)url;
 
 + (void)invalidateCaches;

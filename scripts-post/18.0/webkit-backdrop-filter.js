@@ -1,4 +1,4 @@
-// backdrop-filter -webkit-prefix polyfill for engines without unprefixed support.
+// backdrop-filter → -webkit-backdrop-filter for engines without unprefixed support.
 (function polyfillWebkitBackdropFilter() {
     var __PF_DEBUG__ = false;
     const LOG = "[webkit-backdrop-filter]";

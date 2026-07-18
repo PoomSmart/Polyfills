@@ -1,7 +1,4 @@
-// CSS mask-image -webkit-prefix polyfill for iOS < 15.4
-// Safari < 15.4 requires -webkit-mask-image instead of the unprefixed mask-image.
-// Never rewrites whole <style> sheets in place (breaks monolithic bundles).
-// Instead injects a supplemental <style> with -webkit-mask-* copies of matching rules only.
+// mask-image → -webkit-mask-image; injects supplemental <style> (never rewrites sheets in place).
 (function polyfillWebkitMaskImage() {
     var __PF_DEBUG__ = false;
     const LOG = '[webkit-mask]';

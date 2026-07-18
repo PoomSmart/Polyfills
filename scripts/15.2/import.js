@@ -1,4 +1,4 @@
-// https://gist.github.com/samthor/3ff82bd5b11314fec2e1826d4a96ce7c and ChatGPT
+// https://gist.github.com/samthor/3ff82bd5b11314fec2e1826d4a96ce7c
 (function () {
   function importScript(path) {
     const key = path;

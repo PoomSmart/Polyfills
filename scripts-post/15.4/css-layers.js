@@ -32,7 +32,6 @@
         }, 50);
     }
 
-    // Parsing utilities
     function cleanCSS(css) {
         return parseBlocks(css).join('');
     }
@@ -48,7 +47,6 @@
                 buffer = '';
 
                 i += 6;
-                // Skip layer name list (supports `@layer a, b, c {`)
                 while (i < css.length && css[i] !== '{') i++;
 
                 if (i < css.length && css[i] === '{') {
@@ -58,10 +56,8 @@
                     i = endIndex;
                     continue;
                 } else {
-                    // If we can't find '{', treat as regular text and continue safely
                     buffer += '@layer';
                     if (i >= css.length) break;
-                    // Don't continue without incrementing i
                 }
             }
 
@@ -104,7 +100,6 @@
         i++; // skip initial {
         const blockStart = i;
 
-        // Add iteration limit as safety measure
         let iterations = 0;
         const maxIterations = maxLen * 2; // Reasonable upper bound
 
@@ -196,12 +191,6 @@
         ) {
             cleaned = window.__pfPatchBackdropFilterInCSS(cleaned);
         }
-        // if (
-        //     window.__pfPatchContentVisibilityInCSS &&
-        //     /content-visibility\s*:/i.test(cleaned)
-        // ) {
-        //     cleaned = window.__pfPatchContentVisibilityInCSS(cleaned);
-        // }
         const id = sourceKey
             ? `css-layers-src-${hashString(sourceKey)}`
             : `css-layers-${hashString(cleaned)}`;
@@ -211,11 +200,9 @@
 
     function getStyleSheetText(sheet) {
         try {
-            // Try to access cssRules directly (bypasses CSP for already-loaded stylesheets)
             const rules = Array.from(sheet.cssRules || sheet.rules || []);
             return rules.map(rule => rule.cssText).join('\n');
         } catch (e) {
-            // Cross-origin or other access restriction
             return null;
         }
     }
@@ -410,15 +397,12 @@
                 if (mutation.type === 'childList') {
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType === Node.ELEMENT_NODE) {
-                            // Check for new style elements
                             if (node.tagName === 'STYLE') {
                                 processInlineStyleNode(node);
                             }
-                            // Check for new link elements with stylesheets
                             else if (node.tagName === 'LINK' && node.rel === 'stylesheet') {
                                 needsProcessing = true;
                             }
-                            // Check for nested style/link elements within added nodes
                             else {
                                 const styleNodes = node.querySelectorAll && node.querySelectorAll('style');
                                 const linkNodes = node.querySelectorAll && node.querySelectorAll('link[rel="stylesheet"]');
@@ -436,7 +420,6 @@
                         }
                     }
                 }
-                // Watch for attribute changes on link elements (e.g., href changes)
                 else if (mutation.type === 'attributes' &&
                     mutation.target.tagName === 'LINK' &&
                     mutation.target.rel === 'stylesheet' &&
@@ -446,7 +429,6 @@
             }
 
             if (needsProcessing) {
-                // Debounce stylesheet processing to avoid excessive calls
                 clearTimeout(window.__cssLayersDebounceTimer);
                 window.__cssLayersDebounceTimer = setTimeout(() => {
                     processStyleSheets();
@@ -457,7 +439,6 @@
         if (window.__pfRegisterMutationListener) {
             window.__pfRegisterMutationListener(handleMutations);
         } else {
-            // Fallback: own observer if hub is not available
             const observer = new MutationObserver(handleMutations);
             observer.observe(document, {
                 childList: true,
@@ -500,6 +481,5 @@
         });
     }
 
-    // Register listener for dynamic content
     setupMutationListener();
 })();

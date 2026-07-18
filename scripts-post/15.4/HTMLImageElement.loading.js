@@ -1,11 +1,5 @@
 // https://github.com/mfranzke/loading-attribute-polyfill
-// Upstream expects lazy media inside <noscript class="loading-lazy">. Bare
-// img[loading="lazy"] / iframe[loading="lazy"] are auto-wrapped before defer.
-//
-// iOS 15.0–15.3: WebKit exposes loading on HTMLImageElement but lazy loading
-// (especially with srcset) is unreliable; IntersectionObserver also often skips
-// the initial callback for already-visible nodes inside iframes. This file only
-// loads on iOS < 15.4, so we always defer and eagerly restore in-viewport items.
+// Bare img/iframe[loading=lazy] are auto-wrapped; on iOS < 15.4 always defer and eagerly restore in-viewport items.
 (function () {
     /*
      * Loading attribute polyfill - https://github.com/mfranzke/loading-attribute-polyfill

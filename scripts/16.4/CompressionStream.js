@@ -1,4 +1,3 @@
-// ChatGPT
 (function () {
     const globals =
         typeof globalThis == "undefined"
@@ -9,7 +8,6 @@
                 : self
             : globalThis;
 
-    // Helper function to convert any chunk to Uint8Array while preserving byte data
     function toUint8Array(chunk) {
         if (chunk instanceof Uint8Array) {
             return chunk;
