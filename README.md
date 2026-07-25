@@ -43,4 +43,4 @@ Check out the [WKExperimentalFeatures.md](WKExperimentalFeatures.md) file for re
 
 ## Alternative: Gecko-based Browser
 
-Polyfills can only do so much — some web standards cannot be implemented in JavaScript alone (e.g. CSS features, certain media codecs, or APIs with no JS surface). If you find that websites still don't work correctly on your older iOS device, consider using [Reynard Browser](https://github.com/minh-ton/reynard-browser), a Gecko-based mobile web browser for iOS 14+. Since it runs Firefox's Gecko engine instead of WebKit, it has much broader and more up-to-date web platform support out of the box.
+Polyfills can only do so much — some web standards cannot be implemented in JavaScript alone (e.g. CSS features, certain media codecs, or APIs with no JS surface). If you find that websites still don't work correctly on your older iOS device, consider using [Reynard Browser](https://github.com/minh-ton/reynard-browser), a Gecko-based mobile web browser for iOS 13+. Since it runs Firefox's Gecko engine instead of WebKit, it has much broader and more up-to-date web platform support out of the box.
