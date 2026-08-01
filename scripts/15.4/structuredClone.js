@@ -2,8 +2,291 @@
  * @ungap/structured-clone - A structuredClone polyfill
  * https://github.com/ungap/structured-clone
  * (c) Andrea Giammarchi - ISC License
- * 
  */
 (function () {
-    var StructuredJSON=function(e){"use strict";const r="object"==typeof self?self:globalThis,t=(e,t)=>{switch(e){case"Function":case"SharedWorker":case"Worker":case"eval":case"setInterval":case"setTimeout":throw new TypeError("unable to deserialize "+e)}return new r[e](t)},n=e=>((e,n)=>{const s=(r,t)=>(e.set(t,r),r),c=a=>{if(e.has(a))return e.get(a);const[o,u]=n[a];switch(o){case 0:case-1:return s(u,a);case 1:{const e=s([],a);for(const r of u)e.push(c(r));return e}case 2:{const e=s({},a);for(const[r,t]of u)e[c(r)]=c(t);return e}case 3:return s(new Date(u),a);case 4:{const{source:e,flags:r}=u;return s(new RegExp(e,r),a)}case 5:{const e=s(new Map,a);for(const[r,t]of u)e.set(c(r),c(t));return e}case 6:{const e=s(new Set,a);for(const r of u)e.add(c(r));return e}case 7:{const{name:e,message:n}=u;return s("function"==typeof r[e]?t(e,n):new Error(n),a)}case 8:return s(BigInt(u),a);case"BigInt":return s(Object(BigInt(u)),a);case"ArrayBuffer":return s(new Uint8Array(u).buffer,u);case"DataView":{const{buffer:e}=new Uint8Array(u);return s(new DataView(e),u)}}return s(t(o,u),a)};return c})(new Map,e)(0),s="",{toString:c}={},{keys:a}=Object,o=e=>{const r=typeof e;if("object"!==r||!e)return[0,r];const t=c.call(e).slice(8,-1);switch(t){case"Array":return[1,s];case"Object":return[2,s];case"Date":return[3,s];case"RegExp":return[4,s];case"Map":return[5,s];case"Set":return[6,s];case"DataView":return[1,t]}return t.includes("Array")?[1,t]:e instanceof Error?[7,e.name||"Error"]:[2,t]},u=([e,r])=>0===e&&("function"===r||"symbol"===r),i=(e,{json:r,lossy:t}={})=>{const n=[];return((e,r,t,n)=>{const c=(e,r)=>{const s=n.push(e)-1;return t.set(r,s),s},i=n=>{if(t.has(n))return t.get(n);let[f,l]=o(n);switch(f){case 0:{let r=n;switch(l){case"bigint":f=8,r=n.toString();break;case"function":case"symbol":if(e)throw new TypeError("unable to serialize "+l);r=null;break;case"undefined":return c([-1],n)}return c([f,r],n)}case 1:{if(l){let e=n;return"DataView"===l?e=new Uint8Array(n.buffer):"ArrayBuffer"===l&&(e=new Uint8Array(n)),c([l,[...e]],n)}const e=[],r=c([f,e],n);for(const r of n)e.push(i(r));return r}case 2:{if(l)switch(l){case"BigInt":return c([l,n.toString()],n);case"Boolean":case"Number":case"String":return c([l,n.valueOf()],n)}if(r&&"toJSON"in n)return i(n.toJSON());const t=[],s=c([f,t],n);for(const r of a(n))!e&&u(o(n[r]))||t.push([i(r),i(n[r])]);return s}case 3:return c([f,isNaN(n.getTime())?s:n.toISOString()],n);case 4:{const{source:e,flags:r}=n;return c([f,{source:e,flags:r}],n)}case 5:{const r=[],t=c([f,r],n);for(const[t,s]of n)(e||!u(o(t))&&!u(o(s)))&&r.push([i(t),i(s)]);return t}case 6:{const r=[],t=c([f,r],n);for(const t of n)!e&&u(o(t))||r.push(i(t));return t}}const{message:w}=n;return c([f,{name:l,message:w}],n)};return i})(!(r||t),!!r,new Map,n)(e),n},{parse:f,stringify:l}=JSON,w={json:!0,lossy:!0};return e.parse=e=>n(f(e)),e.stringify=e=>l(i(e,w)),e}({});
+    var VOID = -1;
+    var PRIMITIVE = 0;
+    var ARRAY = 1;
+    var OBJECT = 2;
+    var DATE = 3;
+    var REGEXP = 4;
+    var MAP = 5;
+    var SET = 6;
+    var ERROR = 7;
+    var BIGINT = 8;
+
+    var env = typeof self === 'object' ? self : globalThis;
+
+    var guard = function (name, init) {
+        switch (name) {
+            case 'Function':
+            case 'SharedWorker':
+            case 'Worker':
+            case 'eval':
+            case 'setInterval':
+            case 'setTimeout':
+                throw new TypeError('unable to deserialize ' + name);
+        }
+        return new env[name](init);
+    };
+
+    var deserializer = function ($, _) {
+        var as = function (out, index) {
+            $.set(index, out);
+            return out;
+        };
+
+        var unpair = function (index) {
+            if ($.has(index)) return $.get(index);
+
+            var pair = _[index];
+            var type = pair[0];
+            var value = pair[1];
+
+            switch (type) {
+                case PRIMITIVE:
+                case VOID:
+                    return as(value, index);
+                case ARRAY: {
+                    var arr = as([], index);
+                    for (var i = 0; i < value.length; i++) {
+                        arr.push(unpair(value[i]));
+                    }
+                    return arr;
+                }
+                case OBJECT: {
+                    var object = as({}, index);
+                    for (var j = 0; j < value.length; j++) {
+                        var entry = value[j];
+                        object[unpair(entry[0])] = unpair(entry[1]);
+                    }
+                    return object;
+                }
+                case DATE:
+                    return as(new Date(value), index);
+                case REGEXP: {
+                    return as(new RegExp(value.source, value.flags), index);
+                }
+                case MAP: {
+                    var map = as(new Map(), index);
+                    for (var k = 0; k < value.length; k++) {
+                        var mapEntry = value[k];
+                        map.set(unpair(mapEntry[0]), unpair(mapEntry[1]));
+                    }
+                    return map;
+                }
+                case SET: {
+                    var set = as(new Set(), index);
+                    for (var s = 0; s < value.length; s++) {
+                        set.add(unpair(value[s]));
+                    }
+                    return set;
+                }
+                case ERROR: {
+                    return as(
+                        typeof env[value.name] === 'function'
+                            ? guard(value.name, value.message)
+                            : new Error(value.message),
+                        index
+                    );
+                }
+                case BIGINT:
+                    return as(BigInt(value), index);
+                case 'BigInt':
+                    return as(Object(BigInt(value)), index);
+                case 'ArrayBuffer':
+                    return as(new Uint8Array(value).buffer, value);
+                case 'DataView': {
+                    var buffer = new Uint8Array(value).buffer;
+                    return as(new DataView(buffer), value);
+                }
+            }
+
+            return as(guard(type, value), index);
+        };
+
+        return unpair;
+    };
+
+    var deserialize = function (serialized) {
+        return deserializer(new Map(), serialized)(0);
+    };
+
+    var EMPTY = '';
+    var toString = {}.toString;
+    var keys = Object.keys;
+
+    var typeOf = function (value) {
+        var type = typeof value;
+        if (type !== 'object' || !value) return [PRIMITIVE, type];
+
+        var asString = toString.call(value).slice(8, -1);
+        switch (asString) {
+            case 'Array':
+                return [ARRAY, EMPTY];
+            case 'Object':
+                return [OBJECT, EMPTY];
+            case 'Date':
+                return [DATE, EMPTY];
+            case 'RegExp':
+                return [REGEXP, EMPTY];
+            case 'Map':
+                return [MAP, EMPTY];
+            case 'Set':
+                return [SET, EMPTY];
+            case 'DataView':
+                return [ARRAY, asString];
+        }
+
+        if (asString.indexOf('Array') !== -1) return [ARRAY, asString];
+        if (value instanceof Error) return [ERROR, value.name || 'Error'];
+        return [OBJECT, asString];
+    };
+
+    var shouldSkip = function (typed) {
+        return typed[0] === PRIMITIVE && (typed[1] === 'function' || typed[1] === 'symbol');
+    };
+
+    var serializer = function (strict, json, $, _) {
+        var as = function (out, value) {
+            var index = _.push(out) - 1;
+            $.set(value, index);
+            return index;
+        };
+
+        var pair = function (value) {
+            if ($.has(value)) return $.get(value);
+
+            var typed = typeOf(value);
+            var TYPE = typed[0];
+            var kind = typed[1];
+
+            switch (TYPE) {
+                case PRIMITIVE: {
+                    var entry = value;
+                    switch (kind) {
+                        case 'bigint':
+                            TYPE = BIGINT;
+                            entry = value.toString();
+                            break;
+                        case 'function':
+                        case 'symbol':
+                            if (strict) {
+                                throw new TypeError('unable to serialize ' + kind);
+                            }
+                            entry = null;
+                            break;
+                        case 'undefined':
+                            return as([VOID], value);
+                    }
+                    return as([TYPE, entry], value);
+                }
+                case ARRAY: {
+                    if (kind) {
+                        var spread = value;
+                        if (kind === 'DataView') {
+                            spread = new Uint8Array(value.buffer);
+                        } else if (kind === 'ArrayBuffer') {
+                            spread = new Uint8Array(value);
+                        }
+                        return as([kind, Array.from(spread)], value);
+                    }
+
+                    var arr = [];
+                    var arrIndex = as([TYPE, arr], value);
+                    for (var i = 0; i < value.length; i++) {
+                        arr.push(pair(value[i]));
+                    }
+                    return arrIndex;
+                }
+                case OBJECT: {
+                    if (kind) {
+                        switch (kind) {
+                            case 'BigInt':
+                                return as([kind, value.toString()], value);
+                            case 'Boolean':
+                            case 'Number':
+                            case 'String':
+                                return as([kind, value.valueOf()], value);
+                        }
+                    }
+
+                    if (json && 'toJSON' in value) {
+                        return pair(value.toJSON());
+                    }
+
+                    var entries = [];
+                    var objIndex = as([TYPE, entries], value);
+                    var props = keys(value);
+                    for (var j = 0; j < props.length; j++) {
+                        var key = props[j];
+                        if (strict || !shouldSkip(typeOf(value[key]))) {
+                            entries.push([pair(key), pair(value[key])]);
+                        }
+                    }
+                    return objIndex;
+                }
+                case DATE:
+                    return as(
+                        [TYPE, isNaN(value.getTime()) ? EMPTY : value.toISOString()],
+                        value
+                    );
+                case REGEXP:
+                    return as(
+                        [TYPE, { source: value.source, flags: value.flags }],
+                        value
+                    );
+                case MAP: {
+                    var mapEntries = [];
+                    var mapIndex = as([TYPE, mapEntries], value);
+                    value.forEach(function (mapValue, mapKey) {
+                        if (
+                            strict ||
+                            !(shouldSkip(typeOf(mapKey)) || shouldSkip(typeOf(mapValue)))
+                        ) {
+                            mapEntries.push([pair(mapKey), pair(mapValue)]);
+                        }
+                    });
+                    return mapIndex;
+                }
+                case SET: {
+                    var setEntries = [];
+                    var setIndex = as([TYPE, setEntries], value);
+                    value.forEach(function (setValue) {
+                        if (strict || !shouldSkip(typeOf(setValue))) {
+                            setEntries.push(pair(setValue));
+                        }
+                    });
+                    return setIndex;
+                }
+            }
+
+            return as([TYPE, { name: kind, message: value.message }], value);
+        };
+
+        return pair;
+    };
+
+    var serialize = function (value, options) {
+        options = options || {};
+        var records = [];
+        return serializer(!(options.json || options.lossy), !!options.json, new Map(), records)(
+            value
+        ), records;
+    };
+
+    var globals =
+        typeof globalThis === 'undefined'
+            ? typeof self === 'undefined'
+                ? typeof global === 'undefined'
+                    ? {}
+                    : global
+                : self
+            : globalThis;
+
+    if (!('structuredClone' in globals)) {
+        globals.structuredClone = function (any, options) {
+            return deserialize(serialize(any, options));
+        };
+    }
 })();
