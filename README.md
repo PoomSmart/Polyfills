@@ -15,6 +15,7 @@ The scripts may be put under a folder named after the specific iOS version, such
 ## Requirements
 
 - iOS 8.0 or later
+- Jailbroken device
 
 ## Installation
 
@@ -37,10 +38,12 @@ TL;DR: Depends.
 
 If the website uses modern JavaScript features or APIs that are not supported by the iOS version you are using, this tweak will help polyfill those features. However, it may not cover every single case, especially if the website relies on very recent web standards or APIs that cannot be remedied with JavaScript alone.
 
+Some websites use the adblocker that checks if certain JavaScript APIs are hooked/modified. Since the nature of polyfills is to hook the JavaScript APIs, those websites may not work and it is better for you to just use a modern browser (see "Alternative: Gecko-based Browser" section).
+
 # Additional Notes
 
 Check out the [WKExperimentalFeatures.md](WKExperimentalFeatures.md) file for recommended WebKit experimental features to enable to enhance web compatibility further.
 
 ## Alternative: Gecko-based Browser
 
-Polyfills can only do so much — some web standards cannot be implemented in JavaScript alone (e.g. CSS features, certain media codecs, or APIs with no JS surface). If you find that websites still don't work correctly on your older iOS device, consider using [Reynard Browser](https://github.com/minh-ton/reynard-browser), a Gecko-based mobile web browser for iOS 13+. Since it runs Firefox's Gecko engine instead of WebKit, it has much broader and more up-to-date web platform support out of the box.
+Polyfills can only do so much. Some web standards cannot be implemented in JavaScript alone (e.g. CSS features, certain media codecs, or APIs with no JS surface). If you find that websites still don't work correctly on your older iOS device, consider using [Reynard Browser](https://github.com/minh-ton/reynard-browser), a Gecko-based mobile web browser for iOS 13+. Since it runs Firefox's Gecko engine instead of WebKit, it has much broader and more up-to-date web platform support out of the box.
