@@ -14,7 +14,7 @@ static NSArray<NSString *> *cachedGlobalBlacklist = nil;
 static NSDictionary<NSString *, NSArray<NSString *> *> *cachedScriptBlacklists = nil;
 static dispatch_queue_t blacklistCacheQueue;
 
-@implementation PolyfillsBlacklistManager
+@implementation PFBlacklistManager
 
 + (void)initialize {
     static dispatch_once_t onceToken;

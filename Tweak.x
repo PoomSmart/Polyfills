@@ -14,6 +14,7 @@
 #import <theos/IOSMacros.h>
 #import <version.h>
 #import "Header.h"
+#import "PFBridgeHandler.h"
 
 BOOL userAgentEnabled = NO;
 static const void *PendingUserAgentURLKey = &PendingUserAgentURLKey;
@@ -35,7 +36,7 @@ static BOOL isUserAgentBlacklistedForURL(NSURL *url) {
             return YES;
         }
     }
-    NSArray<NSString *> *blacklist = [PolyfillsBlacklistManager mergedUserAgentBlacklist];
+    NSArray<NSString *> *blacklist = [PFBlacklistManager mergedUserAgentBlacklist];
     if (url == nil || blacklist.count == 0) return NO;
     for (NSString *entry in blacklist) {
         if (PFDomainPathMatchesURL(entry, url)) {
@@ -210,8 +211,8 @@ static NSString *getPolyfillsBasePath() {
 }
 
 static NSString *buildBlacklistDataPrelude(void) {
-    NSArray *globalBlacklist = [PolyfillsBlacklistManager mergedGlobalBlacklist];
-    NSDictionary *blacklistDict = [PolyfillsBlacklistManager mergedScriptBlacklists];
+    NSArray *globalBlacklist = [PFBlacklistManager mergedGlobalBlacklist];
+    NSDictionary *blacklistDict = [PFBlacklistManager mergedScriptBlacklists];
 
     NSMutableDictionary *combinedBlacklist = [NSMutableDictionary dictionary];
     if (blacklistDict) {
@@ -456,7 +457,7 @@ static void applyUserAgentOverrideForURL(WKWebView *webView, NSURL *url) {
     if (resolvedURL == nil) {
         return;
     }
-    NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+    NSString *customUA = [PFUserAgentManager customUserAgentForURL:resolvedURL];
     if (customUA != nil) {
         setUserAgent(webView, customUA);
         return;
@@ -483,7 +484,7 @@ static void applyDefaultUserAgentOverride(WKWebView *webView) {
     if (!userAgentEnabled) return;
     NSURL *resolvedURL = currentUserAgentURL(webView, nil);
     if (resolvedURL) {
-        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+        NSString *customUA = [PFUserAgentManager customUserAgentForURL:resolvedURL];
         if (customUA != nil) {
             setUserAgent(webView, customUA);
             return;
@@ -510,6 +511,20 @@ static void overrideUserAgent(WKWebView *webView) {
     applyDefaultUserAgentOverride(webView);
 }
 
+static const void *InjectedKey = &InjectedKey;
+
+static void PFInstallBridge(WKUserContentController *controller) {
+    if (!controller || !isIOSVersionOrNewer(14, 0)) return;
+    if (@available(iOS 14.0, *)) {
+        @try {
+            [controller addScriptMessageHandlerWithReply:[PFBridgeHandler shared]
+                                            contentWorld:WKContentWorld.pageWorld
+                                                    name:PFBridgeHandlerName];
+        } @catch (NSException *e) {
+        }
+    }
+}
+
 static void loadAndInjectScriptsImmediately(WKUserContentController *controller) {
     ensureScriptsLoaded();
 
@@ -531,6 +546,13 @@ static void loadAndInjectScriptsImmediately(WKUserContentController *controller)
                                                        forMainFrameOnly:NO]];
         HBLogDebug(@"Polyfills: Injected combined end scripts (%lu chars)", (unsigned long)cachedCombinedEndScripts.length);
     }
+}
+
+static void installPolyfillsOnController(WKUserContentController *controller) {
+    if (!controller || objc_getAssociatedObject(controller, InjectedKey)) return;
+    objc_setAssociatedObject(controller, InjectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    loadAndInjectScriptsImmediately(controller);
+    PFInstallBridge(controller);
 }
 
 // Dedicated KVO observer for WKWebView URL changes.
@@ -586,18 +608,13 @@ static const void *KVOObserverKey = &KVOObserverKey;
 
 %hook WKWebView
 
-static const void *InjectedKey = &InjectedKey;
-
 - (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
     WKUserContentController *controller = configuration.userContentController;
     if (!controller) {
         controller = [[WKUserContentController alloc] init];
         configuration.userContentController = controller;
     }
-    if (!objc_getAssociatedObject(controller, InjectedKey)) {
-        objc_setAssociatedObject(controller, InjectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        loadAndInjectScriptsImmediately(controller);
-    }
+    installPolyfillsOnController(controller);
     WKWebView *webView = %orig;
     if (webView && !objc_getAssociatedObject(webView, KVOObserverKey)) {
         PolyfillsKVOObserver *observer = [[PolyfillsKVOObserver alloc] initWithWebView:webView];
@@ -610,11 +627,7 @@ static const void *InjectedKey = &InjectedKey;
 - (instancetype)initWithCoder:(NSCoder *)coder {
     WKWebView *webView = %orig;
     if (webView) {
-        WKUserContentController *controller = webView.configuration.userContentController;
-        if (controller && !objc_getAssociatedObject(controller, InjectedKey)) {
-            objc_setAssociatedObject(controller, InjectedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            loadAndInjectScriptsImmediately(controller);
-        }
+        installPolyfillsOnController(webView.configuration.userContentController);
         if (!objc_getAssociatedObject(webView, KVOObserverKey)) {
             PolyfillsKVOObserver *observer = [[PolyfillsKVOObserver alloc] initWithWebView:webView];
             objc_setAssociatedObject(webView, KVOObserverKey, observer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -646,7 +659,7 @@ static const void *InjectedKey = &InjectedKey;
     HBLogDebug(@"[%p] Polyfills Setting custom user agent: %@", self, customUserAgent);
     NSURL *resolvedURL = currentUserAgentURL(self, nil);
     if (userAgentEnabled && resolvedURL != nil) {
-        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+        NSString *customUA = [PFUserAgentManager customUserAgentForURL:resolvedURL];
         if (customUA != nil) {
             %orig(customUA);
             return;
@@ -663,7 +676,7 @@ static const void *InjectedKey = &InjectedKey;
     HBLogDebug(@"[%p] Polyfills Setting application name for user agent: %@", self, applicationNameForUserAgent);
     NSURL *resolvedURL = currentUserAgentURL(self, nil);
     if (userAgentEnabled && resolvedURL != nil) {
-        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:resolvedURL];
+        NSString *customUA = [PFUserAgentManager customUserAgentForURL:resolvedURL];
         if (customUA != nil) {
             %orig(customUA);
             return;
@@ -684,7 +697,7 @@ static const void *InjectedKey = &InjectedKey;
 
 - (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
     if ([value hasPrefix:@"Mozilla"] && [field caseInsensitiveCompare:@"User-Agent"] == NSOrderedSame) {
-        NSString *customUA = [PolyfillsUserAgentManager customUserAgentForURL:self.URL];
+        NSString *customUA = [PFUserAgentManager customUserAgentForURL:self.URL];
         if (customUA != nil) {
             value = customUA;
         } else if (!isUserAgentBlacklistedForURL(self.URL) && !isIOSVersionOrNewer(16, 3)) {
@@ -713,6 +726,24 @@ static const void *InjectedKey = &InjectedKey;
 }
 
 %end
+
+%end
+
+%hook WKUserContentController
+
+- (void)removeAllUserScripts {
+    %orig;
+    if (objc_getAssociatedObject(self, InjectedKey)) {
+        loadAndInjectScriptsImmediately(self);
+    }
+}
+
+- (void)removeAllScriptMessageHandlers {
+    %orig;
+    if (objc_getAssociatedObject(self, InjectedKey)) {
+        PFInstallBridge(self);
+    }
+}
 
 %end
 

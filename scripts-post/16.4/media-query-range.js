@@ -502,6 +502,13 @@
 
     function fetchStylesheetText(href) {
         const normalizedHref = normalizeStylesheetHref(href);
+        if (typeof window.__pfLoadCssText === "function") {
+            return new Promise((resolve) => {
+                window.__pfLoadCssText(normalizedHref, (err, text) => {
+                    resolve(err || text == null ? null : text);
+                });
+            });
+        }
         const cache = window.__pfFetchCache;
         if (cache && !cache.has(normalizedHref)) {
             cache.set(
@@ -546,19 +553,29 @@
             processedSheetSignatures.set(sheetKey, signature);
             return;
         }
-        // If cssRules are blocked or range syntax was stripped from CSSOM, fetch source CSS.
-        if (sheet.href) {
-            try {
-                const normalizedHref = normalizeStylesheetHref(sheet.href);
-                if (new URL(normalizedHref).origin === location.origin) {
-                    const css = await fetchStylesheetText(normalizedHref);
-                    if (css && /@media\s+[^\{]*[<>]=?/.test(css)) {
-                        const transformed = transformCSS(css);
-                        if (transformed !== css) injectStyle(transformed);
-                    }
-                }
-            } catch (e) {
+        // iOS drops @media (width>=…) from CSSOM, so the source has to be fetched.
+        // github.githubassets.com is not the page origin.
+        if (!sheet.href) return;
+        if (
+            processedSheetSignatures.get(sheetKey) === "src" ||
+            processedSheetSignatures.get(sheetKey) === "pending"
+        ) {
+            return;
+        }
+        processedSheetSignatures.set(sheetKey, "pending");
+        try {
+            const css = await fetchStylesheetText(sheet.href);
+            if (!css) {
+                processedSheetSignatures.delete(sheetKey);
+                return;
             }
+            processedSheetSignatures.set(sheetKey, "src");
+            if (/@media\s+[^\{]*[<>]=?/.test(css)) {
+                const transformed = transformCSS(css);
+                if (transformed !== css) injectStyle(transformed);
+            }
+        } catch (e) {
+            processedSheetSignatures.delete(sheetKey);
         }
     }
 
@@ -647,6 +664,8 @@
             });
         }
     }
+
+    window.__pfTransformMediaRange = transformCSS;
 
     processAll();
     if (document.readyState !== "complete") {

@@ -9,6 +9,19 @@
         dvmax: 'vmax', svmax: 'vmax', lvmax: 'vmax',
     };
 
+    try {
+        var cqProbe = document.createElement('div');
+        cqProbe.style.width = '1cqw';
+        if (cqProbe.style.width.indexOf('cqw') === -1) {
+            UNIT_MAP.cqw = 'vw';
+            UNIT_MAP.cqi = 'vw';
+            UNIT_MAP.cqh = 'vh';
+            UNIT_MAP.cqb = 'vh';
+            UNIT_MAP.cqmin = 'vmin';
+            UNIT_MAP.cqmax = 'vmax';
+        }
+    } catch (e) {}
+
     // Longest first so dvmin/dvmax win over a shorter prefix match.
     const UNIT_NAMES = Object.keys(UNIT_MAP).sort((a, b) => b.length - a.length);
 
@@ -23,7 +36,7 @@
     );
 
     function mightContainUnits(str) {
-        return str.indexOf('dv') !== -1 || str.indexOf('sv') !== -1 || str.indexOf('lv') !== -1;
+        return str.indexOf('dv') !== -1 || str.indexOf('sv') !== -1 || str.indexOf('lv') !== -1 || str.indexOf('cq') !== -1;
     }
 
     function replaceUnitsOutsideVar(str) {

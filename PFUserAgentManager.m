@@ -8,7 +8,7 @@ static NSMutableDictionary<NSString *, NSString *> *runtimeCustomUserAgents = ni
 static NSDictionary<NSString *, NSString *> *cachedMergedUserAgents = nil;
 static dispatch_queue_t uaCacheQueue;
 
-@implementation PolyfillsUserAgentManager
+@implementation PFUserAgentManager
 
 + (void)initialize {
     static dispatch_once_t onceToken;
@@ -120,6 +120,6 @@ static dispatch_queue_t uaCacheQueue;
 @end
 
 void PFInvalidatePreferenceCaches(void) {
-    [PolyfillsUserAgentManager invalidateCaches];
-    [PolyfillsBlacklistManager invalidateCaches];
+    [PFUserAgentManager invalidateCaches];
+    [PFBlacklistManager invalidateCaches];
 }

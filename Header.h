@@ -28,7 +28,7 @@ static inline BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
     return [path isEqualToString:rulePath] || [path hasPrefix:[rulePath hasSuffix:@"/"] ? rulePath : [rulePath stringByAppendingString:@"/"]];
 }
 
-@interface PolyfillsBlacklistManager : NSObject
+@interface PFBlacklistManager : NSObject
 
 + (void)registerDefaultUserAgentBlacklistedWebsites:(NSArray<NSString *> *)websites;
 + (void)registerDefaultGlobalBlacklistedWebsites:(NSArray<NSString *> *)websites;
@@ -48,7 +48,7 @@ static inline BOOL PFDomainPathMatchesURL(NSString *entry, NSURL *url) {
 
 void PFInvalidatePreferenceCaches(void);
 
-@interface PolyfillsUserAgentManager : NSObject
+@interface PFUserAgentManager : NSObject
 
 + (void)registerDefaultCustomUserAgent:(NSString *)userAgent forWebsites:(NSArray<NSString *> *)websites;
 

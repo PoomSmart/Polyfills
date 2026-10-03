@@ -117,9 +117,11 @@
 
         const parts = txt.split("/");
         const main = parts[0].trim();
-        const alphaRaw = parts[1] ? parts[1].trim() : null;
+        const alphaRaw = parts[1] ? parts[1].trim().replace(/^none$/i, "0") : null;
 
-        const tokens = main.split(/[\s,]+/).filter(Boolean);
+        const tokens = main.split(/[\s,]+/).filter(Boolean).map(function (token) {
+            return /^none$/i.test(token) ? "0" : token;
+        });
         if (tokens.length < 3) {
             return null;
         }
@@ -163,8 +165,42 @@
         return { L01: L01, C: Cval, Hdeg, alpha };
     }
 
+    function replaceNoneInColorFns(input) {
+        const names = ["color", "oklab", "lab", "lch", "hsl", "hsla", "hwb", "rgb", "rgba"];
+        let out = "";
+        let i = 0;
+        while (i < input.length) {
+            let found = -1;
+            let name = "";
+            for (let n = 0; n < names.length; n++) {
+                const idx = input.toLowerCase().indexOf(names[n] + "(", i);
+                if (idx !== -1 && (found === -1 || idx < found)) {
+                    found = idx;
+                    name = names[n];
+                }
+            }
+            if (found === -1) {
+                out += input.slice(i);
+                break;
+            }
+            out += input.slice(i, found);
+            let j = found + name.length + 1;
+            let depth = 1;
+            while (j < input.length && depth > 0) {
+                if (input[j] === "(") depth++;
+                else if (input[j] === ")") depth--;
+                j++;
+            }
+            const inside = input.slice(found + name.length + 1, j - 1).replace(/\bnone\b/gi, "0");
+            out += input.slice(found, found + name.length + 1) + replaceNoneInColorFns(inside) + ")";
+            i = j;
+        }
+        return out;
+    }
+
     function replaceOKLCHInText(input) {
         if (!input || typeof input !== "string") return input;
+        input = replaceNoneInColorFns(input);
         let i = 0;
         let out = "";
         while (i < input.length) {
@@ -182,7 +218,7 @@
                 else if (ch === ")") depth--;
                 j++;
             }
-            const inside = input.slice(idx + 6, j - 1);
+            const inside = input.slice(idx + 6, j - 1).replace(/\bnone\b/gi, "0");
             const parsed = tryParseOKLCHArgs(inside);
             if (parsed) {
                 stats.textReplacements++;
@@ -478,7 +514,10 @@
             if (alphaRaw)
                 alphaRaw = resolveVarsRecursive(el, alphaRaw, 0, localVars);
         } catch (_) { }
-        let tokens = splitTopLevelArgs(main);
+        let tokens = splitTopLevelArgs(main).map(function (token) {
+            return /^none$/i.test(token) ? "0" : token;
+        });
+        if (alphaRaw && /^none$/i.test(alphaRaw)) alphaRaw = "0";
         if (tokens.length < 3) {
             return null;
         }
@@ -1219,12 +1258,7 @@
                 whereExp.forEach((s) => queue.push(s));
                 continue;
             }
-            // crude :has() removal for old engines: replace with '*' to avoid SyntaxError
-            const sanitized = cur.replace(
-                /:has\((?:[^()]+|\([^()]*\))*\)/g,
-                "*"
-            );
-            out.add(sanitized);
+            out.add(cur);
         }
         return Array.from(out);
     }

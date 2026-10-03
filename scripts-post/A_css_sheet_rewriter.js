@@ -2,6 +2,24 @@
 (function setupCssSheetRewriter() {
     if (window.__pfInstallCssSheetRewriter) return;
 
+    var shadowTransforms = [];
+    window.__pfRegisterShadowTransform = function (fn) {
+        if (typeof fn !== 'function') return;
+        shadowTransforms.push(fn);
+        if (window.__pfRefreshShadowCss) window.__pfRefreshShadowCss();
+    };
+    window.__pfApplyShadowTransforms = function (css) {
+        var i, next;
+        if (!css) return css;
+        for (i = 0; i < shadowTransforms.length; i++) {
+            try {
+                next = shadowTransforms[i](css);
+                if (typeof next === 'string') css = next;
+            } catch (e) {}
+        }
+        return css;
+    };
+
     function forEachNode(list, fn) {
         if (!list) return;
         var i;
@@ -67,14 +85,25 @@
         }
         entry = { wait: [done], done: false };
         xhrCache[href] = entry;
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', href);
-        xhr.onload = function () {
-            var ok = xhr.status >= 200 && xhr.status < 300 || xhr.status === 0;
-            finish(ok ? null : new Error('status ' + xhr.status), ok ? xhr.responseText : null);
-        };
-        xhr.onerror = function () { finish(new Error('network'), null); };
-        xhr.send();
+        function xhrLoad() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', href);
+            xhr.onload = function () {
+                var ok = xhr.status >= 200 && xhr.status < 300 || xhr.status === 0;
+                finish(ok ? null : new Error('status ' + xhr.status), ok ? xhr.responseText : null);
+            };
+            xhr.onerror = function () { finish(new Error('network'), null); };
+            xhr.send();
+        }
+        if (window.__pfBridgeGet) {
+            window.__pfBridgeGet('css', href).then(function (reply) {
+                var text = reply && (reply.data != null ? reply.data : reply.raw);
+                if (text == null) xhrLoad();
+                else finish(null, text);
+            }, xhrLoad);
+        } else {
+            xhrLoad();
+        }
         function finish(err, text) {
             entry.done = true;
             entry.err = err;
@@ -88,12 +117,44 @@
 
     window.__pfLoadCssText = loadCssText;
 
+    function absCssUrl(rel, base) {
+        if (!rel || /^(data:|blob:|#|[a-z][a-z0-9+.-]*:)/i.test(rel)) return rel;
+        if (rel.indexOf('//') === 0) {
+            var proto = String(base).split(':')[0] || 'https';
+            return proto + ':' + rel;
+        }
+        var originMatch = /^[a-z][a-z0-9+.-]*:\/\/[^/]+/i.exec(base || '');
+        var origin = originMatch ? originMatch[0] : '';
+        if (rel.charAt(0) === '/') return origin ? origin + rel : rel;
+        var dir = String(base || '').replace(/[#?].*$/, '').replace(/[^/]*$/, '');
+        var stack = dir.split('/');
+        var parts = rel.split('/');
+        var i;
+        if (stack.length) stack.pop();
+        for (i = 0; i < parts.length; i++) {
+            if (parts[i] === '' || parts[i] === '.') continue;
+            if (parts[i] === '..') stack.pop();
+            else stack.push(parts[i]);
+        }
+        return stack.join('/');
+    }
+
+    window.__pfAbsolutizeCssUrls = function (css, base) {
+        if (!css || !base) return css;
+        var urlRe = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+        var importRe = /@import\s+(['"])([^'"]+)\1/g;
+        return css
+            .replace(urlRe, function (m, q, u) { return 'url(' + q + absCssUrl(u, base) + q + ')'; })
+            .replace(importRe, function (m, q, u) { return '@import ' + q + absCssUrl(u, base) + q; });
+    };
+
     function isPolyfillStyle(node) {
         if (!node || !node.attributes) return false;
         var attrs = node.attributes;
         var i, name;
         for (i = 0; i < attrs.length; i++) {
             name = attrs[i].name;
+            if (name.indexOf('data-pf-') === 0) return true;
             if (name.indexOf('data-') === 0 && name.indexOf('polyfill') !== -1) return true;
         }
         return false;
@@ -104,8 +165,11 @@
         var marker = opts.marker;
         var extract = opts.extract;
         var patchInline = opts.patchInline;
-        var skipSheet = opts.skipSheet || function (css) {
-            return !!(css && /@layer/i.test(css));
+        var userSkip = opts.skipSheet;
+        var skipSheet = function (css) {
+            if (css && /@layer/i.test(css)) return true;
+            if (userSkip) return userSkip(css);
+            return false;
         };
         if (!marker || typeof extract !== 'function') return;
 
