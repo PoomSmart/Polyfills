@@ -131,5 +131,6 @@
   "webkit-backdrop-filter.js": "Maps backdrop-filter to -webkit-backdrop-filter.",
   "webkit-flex.js": "Maps flexbox properties to -webkit-flex aliases.",
   "webkit-mask-image.js": "Maps mask-image to -webkit-mask-image.",
-  "webkit-transform.js": "Maps transform to -webkit-transform."
+  "webkit-transform.js": "Maps transform to -webkit-transform.",
+  "Window.postMessage.options.js": "window.postMessage() without targetOrigin (defaults to \"/\") and with an options object."
 }
