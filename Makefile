@@ -32,6 +32,13 @@ PolyfillsPreferences_INSTALL_PATH = /Library/PreferenceBundles
 PolyfillsPreferences_FRAMEWORKS = UIKit
 PolyfillsPreferences_PRIVATE_FRAMEWORKS = Preferences
 PolyfillsPreferences_CFLAGS = -fobjc-arc
+PolyfillsPreferences_RESOURCE_FILES = $(THEOS_OBJ_DIR)/descriptions.json
+
+$(THEOS_OBJ_DIR)/descriptions.json: descriptions.json
+	@mkdir -p $(THEOS_OBJ_DIR)
+	@python3 -c 'import json,sys; json.dump(json.load(open(sys.argv[1])), open(sys.argv[2],"w"), separators=(",",":"), ensure_ascii=False)' $< $@
+
+before-all:: $(THEOS_OBJ_DIR)/descriptions.json
 
 include $(THEOS_MAKE_PATH)/bundle.mk
 

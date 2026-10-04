@@ -17,6 +17,144 @@ static NSArray *PFScriptDirs(void) {
     return @[ @"scripts-priority", @"scripts", @"scripts-post" ];
 }
 
+static NSSet *PFHiddenScripts(void) {
+    static NSSet *set;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        set = [NSSet setWithObjects:@"a_blacklist.js", @"a_start.js", @"a_legacy_syntax.js", @"a_globals.js",
+                                    @"a_css_webkit_prefix.js", @"a_css_sheet_rewriter.js",
+                                    @"a_style_hooks.js", @"a_mutation_hub.js", @"pfbridge.js", nil];
+    });
+    return set;
+}
+
+static NSDictionary *PFBundledDescriptions(void) {
+    static NSDictionary *map;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSMutableDictionary *lowered = [NSMutableDictionary dictionary];
+        NSBundle *bundle = [NSBundle bundleForClass:NSClassFromString(@"PolyfillsRootListController")];
+        NSString *path = [bundle pathForResource:@"descriptions" ofType:@"json"];
+        if (path) {
+            NSData *data = [NSData dataWithContentsOfFile:path];
+            id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+            if ([obj isKindOfClass:[NSDictionary class]]) {
+                [(NSDictionary *)obj enumerateKeysAndObjectsUsingBlock:^(id scriptKey, id val, BOOL *stop) {
+                  if ([scriptKey isKindOfClass:[NSString class]] && [val isKindOfClass:[NSString class]])
+                      lowered[[(NSString *)scriptKey lowercaseString]] = val;
+                }];
+            }
+        }
+        map = [lowered copy];
+    });
+    return map;
+}
+
+static NSString *PFParseDescriptionObject(id obj) {
+    if ([obj isKindOfClass:[NSString class]])
+        return obj;
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        id d = [(NSDictionary *)obj objectForKey:@"description"];
+        if ([d isKindOfClass:[NSString class]])
+            return d;
+    }
+    return nil;
+}
+
+static NSString *PFSidecarDescription(NSString *jsPath) {
+    NSString *jsonPath = [[jsPath stringByDeletingPathExtension] stringByAppendingPathExtension:@"json"];
+    NSData *data = [NSData dataWithContentsOfFile:jsonPath];
+    if (!data)
+        return nil;
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingAllowFragments error:nil];
+    return PFParseDescriptionObject(obj);
+}
+
+static NSString *PFDescriptionForScript(NSString *lower, NSString *jsPath) {
+    NSString *sidecar = PFSidecarDescription(jsPath);
+    if (sidecar.length)
+        return sidecar;
+    return PFBundledDescriptions()[lower];
+}
+
+static NSDictionary *PFMakeScriptEntry(NSString *label, NSString *lower, NSUInteger blCount, NSInteger major,
+                                       NSInteger minor, BOOL isBase, NSString *jsPath) {
+    NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObjectsAndKeys:label, @"label", lower, @"script",
+                                                                                   @(blCount), @"blCount", @(major),
+                                                                                   @"major", @(minor), @"minor",
+                                                                                   @(isBase), @"isBase", nil];
+    NSString *desc = PFDescriptionForScript(lower, jsPath);
+    if (desc.length)
+        entry[@"description"] = desc;
+    return entry;
+}
+
+static NSArray *PFCollectScriptEntries(NSDictionary *blacklists) {
+    NSOperatingSystemVersion osv = [[NSProcessInfo processInfo] operatingSystemVersion];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSRegularExpression *verRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d+\\.\\d+$"
+                                                                              options:0
+                                                                                error:nil];
+    NSMutableArray *entries = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (NSString *top in PFScriptDirs()) {
+        NSString *topPath = [[PFBasePath() stringByAppendingPathComponent:top] stringByStandardizingPath];
+        NSString *baseDir = [topPath stringByAppendingPathComponent:@"base"];
+        for (NSString *f in [fm contentsOfDirectoryAtPath:baseDir error:nil]) {
+            if (![f hasSuffix:@".js"])
+                continue;
+            NSString *lower = f.lowercaseString;
+            if ([PFHiddenScripts() containsObject:lower] || [seen containsObject:lower])
+                continue;
+            [seen addObject:lower];
+            NSUInteger blCount = [[blacklists objectForKey:lower] count];
+            [entries addObject:PFMakeScriptEntry(f, lower, blCount, 0, 0, YES,
+                                                [baseDir stringByAppendingPathComponent:f])];
+        }
+        for (NSString *sub in [fm contentsOfDirectoryAtPath:topPath error:nil]) {
+            if ([sub isEqualToString:@"base"])
+                continue;
+            if ([verRegex numberOfMatchesInString:sub options:0 range:NSMakeRange(0, sub.length)] == 0)
+                continue;
+            NSArray *comps = [sub componentsSeparatedByString:@"."];
+            NSInteger vMajor = comps.count > 0 ? [comps[0] integerValue] : 0;
+            NSInteger vMinor = comps.count > 1 ? [comps[1] integerValue] : 0;
+            BOOL currentIsOlder =
+                (osv.majorVersion < vMajor) || (osv.majorVersion == vMajor && osv.minorVersion < vMinor);
+            if (!currentIsOlder)
+                continue;
+            NSString *verDir = [topPath stringByAppendingPathComponent:sub];
+            for (NSString *f in [fm contentsOfDirectoryAtPath:verDir error:nil]) {
+                if (![f hasSuffix:@".js"])
+                    continue;
+                NSString *lower = f.lowercaseString;
+                if ([PFHiddenScripts() containsObject:lower] || [seen containsObject:lower])
+                    continue;
+                [seen addObject:lower];
+                NSUInteger blCount = [[blacklists objectForKey:lower] count];
+                [entries addObject:PFMakeScriptEntry([NSString stringWithFormat:@"%@@%@", f, sub], lower, blCount,
+                                                    vMajor, vMinor, NO, [verDir stringByAppendingPathComponent:f])];
+            }
+        }
+    }
+    [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+      BOOL aBase = [a[@"isBase"] boolValue];
+      BOOL bBase = [b[@"isBase"] boolValue];
+      if (aBase != bBase)
+          return aBase ? NSOrderedAscending : NSOrderedDescending;
+      NSInteger aMaj = [a[@"major"] integerValue];
+      NSInteger bMaj = [b[@"major"] integerValue];
+      if (aMaj != bMaj)
+          return aMaj < bMaj ? NSOrderedAscending : NSOrderedDescending;
+      NSInteger aMin = [a[@"minor"] integerValue];
+      NSInteger bMin = [b[@"minor"] integerValue];
+      if (aMin != bMin)
+          return aMin < bMin ? NSOrderedAscending : NSOrderedDescending;
+      return [a[@"label"] caseInsensitiveCompare:b[@"label"]];
+    }];
+    return entries;
+}
+
 static UITextField *PFLocateTextField(UIView *root) {
     if ([root isKindOfClass:[UITextField class]])
         return (UITextField *)root;
@@ -29,6 +167,9 @@ static UITextField *PFLocateTextField(UIView *root) {
 }
 
 @interface PolyfillsRootListController : PSListController
+@end
+
+@interface PolyfillsScriptsController : PSListController <UISearchResultsUpdating, UISearchBarDelegate>
 @end
 
 @interface PolyfillsGlobalBlacklistController : PSListController <UITextFieldDelegate>
@@ -56,28 +197,7 @@ static UITextField *PFLocateTextField(UIView *root) {
 @property(nonatomic, weak) PolyfillsCustomUserAgentsController *parent;
 @end
 
-@implementation PolyfillsRootListController {
-    NSMutableSet *_disabledScripts;
-    NSMutableDictionary *_blacklists;
-}
-
-- (void)loadPrefs {
-    CFArrayRef dis = (CFArrayRef)CFPreferencesCopyAppValue(disabledScriptsKey, domain);
-    _disabledScripts = [NSMutableSet set];
-    if (dis && CFGetTypeID(dis) == CFArrayGetTypeID())
-        for (NSString *s in (__bridge NSArray *)dis)
-            [_disabledScripts addObject:s.lowercaseString];
-    if (dis)
-        CFRelease(dis);
-    CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
-    _blacklists = [NSMutableDictionary dictionary];
-    if (bl && CFGetTypeID(bl) == CFDictionaryGetTypeID())
-        [_blacklists addEntriesFromDictionary:(__bridge NSDictionary *)bl];
-    if (bl)
-        CFRelease(bl);
-    PFPrefsLog(@"Root loadPrefs: disabled=%lu, blacklistKeys=%@", (unsigned long)_disabledScripts.count,
-               _blacklists.allKeys);
-}
+@implementation PolyfillsRootListController
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
@@ -87,7 +207,6 @@ static UITextField *PFLocateTextField(UIView *root) {
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
-        [self loadPrefs];
         NSMutableArray *specs = [NSMutableArray array];
         PSSpecifier *grp = [PSSpecifier preferenceSpecifierNamed:@"Polyfills"
                                                           target:self
@@ -229,128 +348,28 @@ static UITextField *PFLocateTextField(UIView *root) {
         [globalBlLink setProperty:@YES forKey:@"isController"];
         [specs addObject:globalBlLink];
 
-        PSSpecifier *scriptsGrp = [PSSpecifier preferenceSpecifierNamed:@"Per-Script Blacklists"
+        PSSpecifier *scriptsGrp = [PSSpecifier preferenceSpecifierNamed:@"Scripts"
                                                                  target:self
                                                                     set:NULL
                                                                     get:NULL
                                                                  detail:Nil
                                                                    cell:PSGroupCell
                                                                    edit:Nil];
-        [scriptsGrp setProperty:@"Fine-tune individual scripts for specific websites (advanced)." forKey:@"footerText"];
+        [scriptsGrp setProperty:@"Enable or blacklist individual polyfills." forKey:@"footerText"];
         [specs addObject:scriptsGrp];
 
-        NSMutableArray *entries = [NSMutableArray array];
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSRegularExpression *verRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d+\\.\\d+$"
-                                                                                  options:0
-                                                                                    error:nil];
-        NSMutableSet *seen = [NSMutableSet set];
-        for (NSString *top in PFScriptDirs()) {
-            NSString *topPath = [[PFBasePath() stringByAppendingPathComponent:top] stringByStandardizingPath];
-            // Base scripts (always applicable) use synthetic version 0.0 so they sort first.
-            NSString *baseDir = [topPath stringByAppendingPathComponent:@"base"];
-            for (NSString *f in [fm contentsOfDirectoryAtPath:baseDir error:nil])
-                if ([f hasSuffix:@".js"]) {
-                    NSString *lower = f.lowercaseString;
-                    if ([lower hasPrefix:@"a_"])
-                        continue;
-                    if ([seen containsObject:lower])
-                        continue; // first one wins
-                    [seen addObject:lower];
-                    NSUInteger blCount = [[_blacklists objectForKey:lower] count];
-                    [entries addObject:@{
-                        @"label" : f,
-                        @"script" : lower,
-                        @"blCount" : @(blCount),
-                        @"major" : @0,
-                        @"minor" : @0,
-                        @"isBase" : @YES
-                    }];
-                }
-            // Version directories (only those whose threshold is greater than current OS -> still active)
-            NSArray *topItems = [fm contentsOfDirectoryAtPath:topPath error:nil];
-            for (NSString *sub in topItems) {
-                if ([sub isEqualToString:@"base"])
-                    continue;
-                if ([verRegex numberOfMatchesInString:sub options:0 range:NSMakeRange(0, sub.length)] == 0)
-                    continue;
-                NSArray *comps = [sub componentsSeparatedByString:@"."];
-                NSInteger vMajor = comps.count > 0 ? [comps[0] integerValue] : 0;
-                NSInteger vMinor = comps.count > 1 ? [comps[1] integerValue] : 0;
-                BOOL currentIsOlder =
-                    (osv.majorVersion < vMajor) || (osv.majorVersion == vMajor && osv.minorVersion < vMinor);
-                if (!currentIsOlder)
-                    continue;
-                NSString *verDir = [topPath stringByAppendingPathComponent:sub];
-                for (NSString *f in [fm contentsOfDirectoryAtPath:verDir error:nil])
-                    if ([f hasSuffix:@".js"]) {
-                        NSString *lower = f.lowercaseString;
-                        if ([seen containsObject:lower])
-                            continue;
-                        [seen addObject:lower];
-                        NSUInteger blCount = [[_blacklists objectForKey:lower] count];
-                        NSString *label = [NSString stringWithFormat:@"%@@%@", f, sub];
-                        [entries addObject:@{
-                            @"label" : label,
-                            @"script" : lower,
-                            @"blCount" : @(blCount),
-                            @"major" : @(vMajor),
-                            @"minor" : @(vMinor),
-                            @"isBase" : @NO
-                        }];
-                    }
-            }
-        }
-        // Sort: base first, then ascending version (major, minor), then label.
-        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-          BOOL aBase = [a[@"isBase"] boolValue];
-          BOOL bBase = [b[@"isBase"] boolValue];
-          if (aBase != bBase)
-              return aBase ? NSOrderedAscending : NSOrderedDescending;
-          NSInteger aMaj = [a[@"major"] integerValue];
-          NSInteger bMaj = [b[@"major"] integerValue];
-          if (aMaj != bMaj)
-              return aMaj < bMaj ? NSOrderedAscending : NSOrderedDescending;
-          NSInteger aMin = [a[@"minor"] integerValue];
-          NSInteger bMin = [b[@"minor"] integerValue];
-          if (aMin != bMin)
-              return aMin < bMin ? NSOrderedAscending : NSOrderedDescending;
-          return [a[@"label"] caseInsensitiveCompare:b[@"label"]];
-        }];
-        for (NSDictionary *entry in entries) {
-            NSString *label = entry[@"label"];
-            NSString *script = entry[@"script"];
-            NSUInteger blCount = [entry[@"blCount"] unsignedIntegerValue];
-            PSSpecifier *scriptGroup = [PSSpecifier preferenceSpecifierNamed:label
-                                                                      target:self
-                                                                         set:NULL
-                                                                         get:NULL
-                                                                      detail:Nil
-                                                                        cell:PSGroupCell
-                                                                        edit:Nil];
-            [specs addObject:scriptGroup];
-            PSSpecifier *tog = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
-                                                              target:self
-                                                                 set:@selector(setScriptEnabled:specifier:)
-                                                                 get:@selector(isScriptEnabled:)
-                                                              detail:Nil
-                                                                cell:PSSwitchCell
-                                                                edit:Nil];
-            [tog setProperty:script forKey:@"scriptName"];
-            [specs addObject:tog];
-            NSString *blLabel = [NSString stringWithFormat:@"Blacklist (%lu)", (unsigned long)blCount];
-            PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:blLabel
-                                                               target:self
-                                                                  set:NULL
-                                                                  get:NULL
-                                                               detail:[PolyfillsScriptBlacklistController class]
-                                                                 cell:PSLinkCell
-                                                                 edit:Nil];
-            [edit setProperty:script forKey:@"scriptName"];
-            [edit setProperty:@YES forKey:@"enabled"];
-            [edit setProperty:@YES forKey:@"isController"];
-            [specs addObject:edit];
-        }
+        NSUInteger scriptCount = PFCollectScriptEntries(nil).count;
+        NSString *scriptsLabel = [NSString stringWithFormat:@"Manage Scripts (%lu)", (unsigned long)scriptCount];
+        PSSpecifier *scriptsLink = [PSSpecifier preferenceSpecifierNamed:scriptsLabel
+                                                                   target:self
+                                                                      set:NULL
+                                                                      get:NULL
+                                                                   detail:[PolyfillsScriptsController class]
+                                                                     cell:PSLinkCell
+                                                                     edit:Nil];
+        [scriptsLink setProperty:@YES forKey:@"enabled"];
+        [scriptsLink setProperty:@YES forKey:@"isController"];
+        [specs addObject:scriptsLink];
 
         PSSpecifier *footer = [PSSpecifier preferenceSpecifierNamed:@"About"
                                                              target:self
@@ -366,6 +385,208 @@ static UITextField *PFLocateTextField(UIView *root) {
     return _specifiers;
 }
 
+@end
+
+@implementation PolyfillsScriptsController {
+    NSMutableSet *_disabledScripts;
+    NSMutableDictionary *_blacklists;
+    NSString *_searchText;
+    UISearchController *_searchController;
+    UISearchBar *_legacySearchBar;
+}
+
+- (void)loadPrefs {
+    CFArrayRef dis = (CFArrayRef)CFPreferencesCopyAppValue(disabledScriptsKey, domain);
+    _disabledScripts = [NSMutableSet set];
+    if (dis && CFGetTypeID(dis) == CFArrayGetTypeID())
+        for (NSString *s in (__bridge NSArray *)dis)
+            [_disabledScripts addObject:s.lowercaseString];
+    if (dis)
+        CFRelease(dis);
+    CFDictionaryRef bl = (CFDictionaryRef)CFPreferencesCopyAppValue(scriptBlacklistKey, domain);
+    _blacklists = [NSMutableDictionary dictionary];
+    if (bl && CFGetTypeID(bl) == CFDictionaryGetTypeID())
+        [_blacklists addEntriesFromDictionary:(__bridge NSDictionary *)bl];
+    if (bl)
+        CFRelease(bl);
+}
+
+- (UITableView *)_tableView {
+    if ([self respondsToSelector:@selector(table)]) {
+        UITableView *t = [self performSelector:@selector(table)];
+        if ([t isKindOfClass:[UITableView class]])
+            return t;
+    }
+    if ([self.view isKindOfClass:[UITableView class]])
+        return (UITableView *)self.view;
+    for (UIView *sub in self.view.subviews)
+        if ([sub isKindOfClass:[UITableView class]])
+            return (UITableView *)sub;
+    return nil;
+}
+
+- (void)_attachLegacySearchBar {
+    if (!_legacySearchBar)
+        return;
+    UITableView *table = [self _tableView];
+    if (!table)
+        return;
+    CGFloat width = table.bounds.size.width;
+    if (width <= 0)
+        width = self.view.bounds.size.width;
+    _legacySearchBar.frame = CGRectMake(0, 0, width, 44);
+    if (table.tableHeaderView != _legacySearchBar)
+        table.tableHeaderView = _legacySearchBar;
+}
+
+- (void)_applySearchText:(NSString *)text {
+    NSString *raw = text ?: @"";
+    NSString *trimmed = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *current = _searchText ?: @"";
+    if ([current isEqualToString:trimmed])
+        return;
+    BOOL restoreLegacyFocus = _legacySearchBar.isFirstResponder;
+    _searchText = trimmed;
+    _specifiers = nil;
+    [self reloadSpecifiers];
+    if (_legacySearchBar) {
+        [self _attachLegacySearchBar];
+        _legacySearchBar.text = text ?: @"";
+        if (restoreLegacyFocus)
+            [_legacySearchBar becomeFirstResponder];
+    }
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Scripts";
+    if (@available(iOS 11.0, *)) {
+        UISearchController *sc = [[UISearchController alloc] initWithSearchResultsController:nil];
+        sc.searchResultsUpdater = self;
+        sc.hidesNavigationBarDuringPresentation = NO;
+        sc.obscuresBackgroundDuringPresentation = NO;
+        sc.searchBar.placeholder = @"Search";
+        sc.searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        sc.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+        self.navigationItem.searchController = sc;
+        self.navigationItem.hidesSearchBarWhenScrolling = NO;
+        self.definesPresentationContext = YES;
+        _searchController = sc;
+    } else {
+        UISearchBar *bar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, 0, 44)];
+        bar.delegate = self;
+        bar.placeholder = @"Search";
+        bar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        bar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        bar.autocorrectionType = UITextAutocorrectionTypeNo;
+        _legacySearchBar = bar;
+    }
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    _specifiers = nil;
+    [self reloadSpecifiers];
+    [self _attachLegacySearchBar];
+}
+
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
+    [self _applySearchText:searchController.searchBar.text];
+}
+
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    [self _applySearchText:searchText];
+}
+
+- (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
+    [searchBar setShowsCancelButton:YES animated:YES];
+}
+
+- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
+    searchBar.text = @"";
+    [searchBar setShowsCancelButton:NO animated:YES];
+    [searchBar resignFirstResponder];
+    [self _applySearchText:@""];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        [self loadPrefs];
+        NSArray *entries = PFCollectScriptEntries(_blacklists);
+        NSString *query = _searchText.lowercaseString;
+        if (query.length) {
+            NSMutableArray *filtered = [NSMutableArray array];
+            for (NSDictionary *entry in entries) {
+                NSString *label = [entry[@"label"] lowercaseString];
+                NSString *script = entry[@"script"];
+                NSString *desc = [entry[@"description"] lowercaseString];
+                if ([label rangeOfString:query].location != NSNotFound ||
+                    [script rangeOfString:query].location != NSNotFound ||
+                    (desc.length && [desc rangeOfString:query].location != NSNotFound))
+                    [filtered addObject:entry];
+            }
+            entries = filtered;
+        }
+        NSMutableArray *specs = [NSMutableArray array];
+        if (entries.count == 0) {
+            PSSpecifier *empty = [PSSpecifier preferenceSpecifierNamed:@"Scripts"
+                                                                target:self
+                                                                   set:NULL
+                                                                   get:NULL
+                                                                detail:Nil
+                                                                  cell:PSGroupCell
+                                                                  edit:Nil];
+            [empty setProperty:query.length ? @"No scripts match your search." : @"No scripts found."
+                        forKey:@"footerText"];
+            [specs addObject:empty];
+        } else {
+            for (NSDictionary *entry in entries) {
+                NSString *label = entry[@"label"];
+                NSString *script = entry[@"script"];
+                NSUInteger blCount = [entry[@"blCount"] unsignedIntegerValue];
+                PSSpecifier *scriptGroup = [PSSpecifier preferenceSpecifierNamed:label
+                                                                          target:self
+                                                                             set:NULL
+                                                                             get:NULL
+                                                                          detail:Nil
+                                                                            cell:PSGroupCell
+                                                                            edit:Nil];
+                NSString *desc = entry[@"description"];
+                if ([desc length])
+                    [scriptGroup setProperty:desc forKey:@"footerText"];
+                [specs addObject:scriptGroup];
+                PSSpecifier *tog = [PSSpecifier preferenceSpecifierNamed:@"Enabled"
+                                                                  target:self
+                                                                     set:@selector(setScriptEnabled:specifier:)
+                                                                     get:@selector(isScriptEnabled:)
+                                                                  detail:Nil
+                                                                    cell:PSSwitchCell
+                                                                    edit:Nil];
+                [tog setProperty:script forKey:@"scriptName"];
+                [specs addObject:tog];
+                NSString *blLabel = [NSString stringWithFormat:@"Blacklist (%lu)", (unsigned long)blCount];
+                PSSpecifier *edit = [PSSpecifier preferenceSpecifierNamed:blLabel
+                                                                   target:self
+                                                                      set:NULL
+                                                                      get:NULL
+                                                                   detail:[PolyfillsScriptBlacklistController class]
+                                                                     cell:PSLinkCell
+                                                                     edit:Nil];
+                [edit setProperty:script forKey:@"scriptName"];
+                [edit setProperty:@YES forKey:@"enabled"];
+                [edit setProperty:@YES forKey:@"isController"];
+                [specs addObject:edit];
+            }
+        }
+        _specifiers = specs;
+    }
+    return _specifiers;
+}
+
 - (id)isScriptEnabled:(PSSpecifier *)spec {
     return @(![_disabledScripts containsObject:[spec propertyForKey:@"scriptName"]]);
 }
@@ -376,10 +597,6 @@ static UITextField *PFLocateTextField(UIView *root) {
         [_disabledScripts removeObject:n];
     else
         [_disabledScripts addObject:n];
-    [self saveDisabled];
-}
-
-- (void)saveDisabled {
     CFPreferencesSetAppValue(disabledScriptsKey, (__bridge CFArrayRef)_disabledScripts.allObjects, domain);
     CFPreferencesAppSynchronize(domain);
     PFPrefsLog(@"Saved disabled scripts (%lu)", (unsigned long)_disabledScripts.count);

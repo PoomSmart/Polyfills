@@ -12,6 +12,42 @@ The scripts under `/scripts` are injected at [the document start](https://develo
 
 The scripts may be put under a folder named after the specific iOS version, such as `15.0`. The scripts inside that folder will only be injected when the device iOS version is **no more than** the version specified in the folder name. That is, they will run under iOS 14.8 and earlier.
 
+## Adding your own polyfills
+
+Other packages can depend on Polyfills (`Depends: com.ps.polyfills`) and ship only JavaScript. Install `.js` files under:
+
+```
+/Library/Application Support/Polyfills/
+├── scripts-priority/   # document start, before scripts/
+├── scripts/            # document start
+└── scripts-post/       # document end
+```
+
+Use `base/` for scripts that should run on every iOS version. Use a `MAJOR.MINOR` folder (for example `16.4`) for scripts that should run only when the device is older than that version.
+
+Files in a directory load alphabetically. Keep the filename unique; if the same name already exists, the first one found wins.
+
+### Settings description
+
+The Settings Scripts page lists each polyfill and can search its description. First-party scripts use a bundled catalog. For your package, put a JSON file next to the script, with the same basename:
+
+```
+.../scripts/16.4/MyAPI.js
+.../scripts/16.4/MyAPI.json
+```
+
+Either form works:
+
+```json
+"Adds MyAPI for older WebKit."
+```
+
+```json
+{ "description": "Adds MyAPI for older WebKit." }
+```
+
+That text is shown under the script and is included in search. A sidecar description overrides the bundled catalog when both exist.
+
 ## Requirements
 
 - iOS 8.0 or later
