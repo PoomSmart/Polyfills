@@ -441,10 +441,21 @@
         return ns;
     }
 
-    function run(url) {
+    function run(url, importer) {
         var rec = getRec(url);
-        if (rec.running && !rec.finished) return Promise.resolve(rec.ns || makeNs(rec));
-        if (rec.done) return rec.done;
+        if (rec.done) {
+            // Only a static dependency that closes a wait cycle may use an
+            // unfinished namespace. Independent callers must await evaluation,
+            // including its rejection, before reading/copying any exports.
+            var waiting = rec;
+            var visited = [];
+            while (importer && waiting && visited.indexOf(waiting) === -1) {
+                if (waiting === importer) return Promise.resolve(makeNs(rec));
+                visited.push(waiting);
+                waiting = waiting.waitingFor;
+            }
+            return rec.done;
+        }
         if (!active && !rec.needs) {
             try {
                 var nativeImport = new Function('u', 'return import(u)');
@@ -464,7 +475,16 @@
         var depNs = [];
         rec.deps.forEach(function (dep, index) {
             chain = chain.then(function () {
-                return run(dep).then(function (mod) { depNs[index] = mod; });
+                // Track actual waits rather than just a traversal's ancestors:
+                // another root may already be evaluating part of this cycle.
+                rec.waitingFor = getRec(dep);
+                return run(dep, rec).then(function (mod) {
+                    rec.waitingFor = null;
+                    depNs[index] = mod;
+                }, function (error) {
+                    rec.waitingFor = null;
+                    throw error;
+                });
             });
         });
         rec.done = chain.then(function () { return defineNow(rec); }).then(function () {
